@@ -59,6 +59,7 @@ local SELL_COOLDOWN   = 1.0    -- min seconds between auto-sells (was 2.0)
 local SELL_INTERVAL   = 3.0    -- also sell on this interval even when not full…
 local SELL_MIN_FRUIT  = 8      -- …but only if FruitCount >= this (so a near-empty SellAll isn't wasted)
 local SELL_MODE       = "Instant"  -- "Instant" = SellAll whenever you hold any fruit; "Full" = only at MaxFruitCapacity
+local SELL_DELAY      = 3      -- seconds between sells in Instant mode (user-tunable; higher = fewer SellAll fires = less lag)
 local AUTO_BUY        = true   -- buy the seeds/gears you tick (when in stock)
 local BUY_RESCAN      = 1.0    -- seconds between shop buy sweeps (was 5.0 — reduced for faster pet detection)
 local BUY_FIRE_GAP    = 0.15   -- pace between individual purchase fires
@@ -177,7 +178,7 @@ end
 -- STATE
 --===========================================================================--
 local State = {
-    alive = true, running = AUTO_START, autoSell = AUTO_SELL, sellMode = SELL_MODE, autoBuy = AUTO_BUY, autoBuyPets = AUTO_BUY_PETS,
+    alive = true, running = AUTO_START, autoSell = AUTO_SELL, sellMode = SELL_MODE, sellDelay = SELL_DELAY, autoBuy = AUTO_BUY, autoBuyPets = AUTO_BUY_PETS,
     autoSteal = AUTO_STEAL,
     protectBase = false,   -- PROTECT BASE: at night, stand inside your own garden so IsInOwnGarden=true -> nobody can steal from you
     autoMail = false, mailTo = "", mailItems = {}, mailLeave = 0, mailStatus = "off", mailSent = 0,   -- AUTO MAIL: auto-repeat gift item types (multi) to a recipient. mailItems = { {cat=,typeName=}, ... }
@@ -486,7 +487,7 @@ local uiBuilding = false   -- true while buildGui constructs controls; ignore th
 
 local function configTable()     -- portable settings snapshot — used by BOTH save-to-file AND export-as-code
     return {
-        running = State.running, autoSell = State.autoSell, sellMode = State.sellMode, autoBuy = State.autoBuy, autoBuyPets = State.autoBuyPets,
+        running = State.running, autoSell = State.autoSell, sellMode = State.sellMode, sellDelay = State.sellDelay, autoBuy = State.autoBuy, autoBuyPets = State.autoBuyPets,
         buyOnce = State.buyOnce,
         harvestSpeed = State.harvestSpeed,
         autoSteal = State.autoSteal, protectBase = State.protectBase, snipeAuto = State.snipeAuto, snipeRar = State.snipeRar, snipePets = State.snipePets,
@@ -529,6 +530,7 @@ local function applyConfigTable(d)   -- apply a DECODED settings table straight 
         if type(d.harvestSpeed) == "number" then State.harvestSpeed = math.clamp(d.harvestSpeed, 1, 10); State.fireGap = math.max(0, (10 - State.harvestSpeed) * 0.025) end
         if type(d.autoSell)    == "boolean" then State.autoSell    = d.autoSell end
         if type(d.sellMode)    == "string"  and (d.sellMode == "Instant" or d.sellMode == "Full") then State.sellMode = d.sellMode end
+        if type(d.sellDelay)   == "number"  then State.sellDelay   = math.clamp(d.sellDelay, 1, 30) end
         if type(d.autoBuy)     == "boolean" then State.autoBuy     = d.autoBuy end
         if type(d.autoBuyPets) == "boolean" then State.autoBuyPets = d.autoBuyPets end
         if type(d.buyOnce)     == "boolean" then State.buyOnce     = d.buyOnce end
@@ -1009,8 +1011,9 @@ local function trySell()
     if not State.autoSell then return end
     if fc == nil or cap == nil or cap <= 0 then return end
     if fc <= 0 then return end                                   -- nothing to sell
-    if (os.clock() - lastSell) < SELL_COOLDOWN then return end   -- hard rate-limit, always honoured
-    if State.sellMode == "Full" and fc < math.floor(cap * SELL_AT_PERCENT) then return end   -- Full: only at (near) capacity. Instant (default): sell now, paced by SELL_COOLDOWN.
+    local gap = math.max(SELL_COOLDOWN, tonumber(State.sellDelay) or SELL_COOLDOWN)
+    if (os.clock() - lastSell) < gap then return end             -- user-set delay between sells (fewer SellAll fires = less lag)
+    if State.sellMode == "Full" and fc < math.floor(cap * SELL_AT_PERCENT) then return end   -- Full: only at (near) capacity. Instant (default): sell every "Sell delay" seconds.
     local p = packet("NPCS", "SellAll"); if not p then return end
     lastSell = os.clock()
     State.status = "selling…"
@@ -3939,8 +3942,10 @@ local function buildGui()
     hT:OnChanged(function(v) if uiBuilding then return end; State.running = v; saveConfig() end)
     local sT = farm:AddToggle("ahf_sell", { Title = "Auto Sell", Description = "Sell fruit via SellAll.", Default = State.autoSell })
     sT:OnChanged(function(v) if uiBuilding then return end; State.autoSell = v; saveConfig() end)
-    local sModeDD = farm:AddDropdown("ahf_sellmode", { Title = "Sell mode", Description = "Instant = sell as you go; Full = only at capacity.", Values = { "Instant", "Full" }, Multi = false, Default = State.sellMode or "Instant" })
-    sModeDD:OnChanged(function(v) if uiBuilding then return end; State.sellMode = v; saveConfig() end)
+    local sFullT = farm:AddToggle("ahf_sellfull", { Title = "Sell only when full", Description = "Off = Instant (sell as you go).", Default = (State.sellMode == "Full") })
+    sFullT:OnChanged(function(v) if uiBuilding then return end; State.sellMode = v and "Full" or "Instant"; saveConfig() end)
+    local sDelayS = farm:AddSlider("ahf_selldelay", { Title = "Sell delay (s)", Description = "Gap between Instant sells. Higher = less lag.", Default = State.sellDelay or 3, Min = 1, Max = 30, Rounding = 0 })
+    sDelayS:OnChanged(function(v) if uiBuilding then return end; State.sellDelay = v; saveConfig() end)
     local spdT = farm:AddSlider("ahf_speed", {
         Title = "Harvest Speed",
         Description = "Higher = faster (10 = max).",
@@ -4570,7 +4575,7 @@ local function buildGui()
         -- restore EVERY config-backed field to its default
         State.running, State.autoSell, State.autoBuy, State.autoBuyPets, State.autoSteal = false, false, false, false, false   -- Reset = clean slate: ALL automation OFF
         State.protectBase = false
-        State.sellMode = "Instant"
+        State.sellMode, State.sellDelay = "Instant", 3
         State.limitHarvestKg, State.maxHarvestKg, State.espWeight = false, 50, false
         State.autoMail, State.mailTo, State.mailItems, State.mailLeave, State.mailStatus = false, "", {}, 0, "off"
         State.buyOnce, State.buyArmed = false, true
@@ -4592,7 +4597,7 @@ local function buildGui()
         pcall(applyPerfMode, false); pcall(applyHidePlants, false); pcall(applyHideAvatar, false)   -- undo the on-screen effects, not just the flags
         pcall(function() local c = LocalPlayer.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.Anchored = false end end)
         -- push every value into its matching UI control (multi-dropdowns take the array form)
-        pcall(function() hT:SetValue(false) end);      pcall(function() sT:SetValue(false) end);  pcall(function() sModeDD:SetValue("Instant") end)
+        pcall(function() hT:SetValue(false) end);      pcall(function() sT:SetValue(false) end);  pcall(function() sFullT:SetValue(false) end);  pcall(function() sDelayS:SetValue(3) end)
         pcall(function() bT:SetValue(false) end);      pcall(function() petT:SetValue(false) end)
         pcall(function() petOnceT:SetValue(false) end)
         pcall(function() stT:SetValue(false) end);     pcall(function() spdT:SetValue(6) end)
@@ -4679,7 +4684,8 @@ local function buildGui()
         local prev = uiBuilding; uiBuilding = true
     pcall(function() hT:SetValue(State.running) end)
     pcall(function() sT:SetValue(State.autoSell) end)
-    pcall(function() sModeDD:SetValue(State.sellMode or "Instant") end)
+    pcall(function() sFullT:SetValue(State.sellMode == "Full") end)
+    pcall(function() sDelayS:SetValue(State.sellDelay or 3) end)
     pcall(function() spdT:SetValue(State.harvestSpeed) end)
     pcall(function() wlimT:SetValue(State.limitHarvestKg) end)
     pcall(function() wmaxT:SetValue(State.maxHarvestKg) end)
