@@ -586,6 +586,25 @@ end
 loadConfig()                    -- restore saved settings BEFORE the engine/UI start
 State.saveConfig = saveConfig   -- exposed for the UI handlers + reset
 
+-- ── CONFIG SHARING: export/import a portable code so settings can be reused on another account/device ──
+local function exportConfig()
+    pcall(saveConfig)                                              -- flush current State to disk first
+    local ok, s = pcall(function() return readfile(CFG_FILE) end)
+    return (ok and type(s) == "string" and #s > 1) and s or "{}"
+end
+local function importConfig(code)
+    if type(code) ~= "string" then return false end
+    code = (code:gsub("^%s+", ""):gsub("%s+$", ""))
+    local ok, d = pcall(function() return HttpService:JSONDecode(code) end)
+    if not ok or type(d) ~= "table" then return false end          -- not a valid config code
+    if not _hasFiles then return false end
+    pcall(function() writefile(CFG_FILE, code) end)                -- persist for next launch
+    pcall(loadConfig)                                              -- re-read into State (reads the file we just wrote)
+    pcall(function() if State.refreshUI then State.refreshUI() end end)   -- sync every UI control to the new State
+    return true
+end
+State.exportConfig, State.importConfig = exportConfig, importConfig
+
 -- FAST loading skip — kills the game's "Loading X/2500" preloader instantly instead of
 -- waiting through the click→key skip phases. Verified safe: disabling LoadingScreenController +
 -- hiding LoadingGui leaves the game fully playable (assets stream in background).
@@ -3903,6 +3922,7 @@ local function buildGui()
     local fhT    = Window:AddTab({ Title = "Farm Helpers", Icon = "" })
     local weaT   = Window:AddTab({ Title = "Weather", Icon = "" })
     local mailT = Window:AddTab({ Title = "Mail",     Icon = "" })
+    local cfgTab = Window:AddTab({ Title = "Config",  Icon = "" })
     local misc  = Window:AddTab({ Title = "Settings", Icon = "" })
     local mailPar, mailToIn, mailItemDD, mailLeaveS, autoMailT, _miMap   -- forward-declared (Reset, restore + refresh loop reference them)
 
@@ -4559,6 +4579,9 @@ local function buildGui()
         State.antiShovel = false
         State.autoShovelHit = false
         State.autoProtectPets = false
+        State.snipeSkipOld, State.snipeMaxAge = true, 5
+        State.perfMode, State.hidePlants, State.hideAvatar = false, false, false
+        pcall(applyPerfMode, false); pcall(applyHidePlants, false); pcall(applyHideAvatar, false)   -- undo the on-screen effects, not just the flags
         pcall(function() local c = LocalPlayer.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.Anchored = false end end)
         -- push every value into its matching UI control (multi-dropdowns take the array form)
         pcall(function() hT:SetValue(true) end);       pcall(function() sT:SetValue(true) end)
@@ -4577,6 +4600,9 @@ local function buildGui()
         pcall(function() snAutoT:SetValue(false) end); pcall(function() snRarDD:SetValue(setToArray({ Legendary = true, Mythic = true, Super = true })) end);   pcall(function() if snPetDD then snPetDD:SetValue({}) end end)
         pcall(function() afkT:SetValue(true) end);     pcall(function() flingT:SetValue(false) end)
         pcall(function() wbT:SetValue(false) end);     pcall(function() lockT:SetValue(false) end); pcall(function() shovelHitT:SetValue(false) end); pcall(function() protectT:SetValue(false) end)
+        pcall(function() antiShovelT:SetValue(false) end)
+        pcall(function() snSkipOldT:SetValue(true) end); pcall(function() snMaxAgeS:SetValue(5) end)
+        pcall(function() perfT:SetValue(false) end);   pcall(function() hidePlantsT:SetValue(false) end);   pcall(function() hideAvatarT:SetValue(false) end)
         uiBuilding = false
         saveConfig()
         Fluent:Notify({ Title = "YumaBlox", Content = "All settings reset to defaults.", Duration = 3 })
@@ -4602,6 +4628,29 @@ local function buildGui()
         mailT:AddButton({ Title = "Refresh sendable items", Description = "Re-read your inventory into the picker.", Callback = function() pcall(function() local l, m = mailItemLabels(); _miMap = m; mailItemDD:SetValues(l) end) end })
     end)
 
+    ---------------------------------------------------------------- CONFIG (share settings across accounts)
+    cfgTab:AddParagraph({ Title = "Share your settings", Content = "Copy a config code, then paste it on another account/device and Load — no need to set everything up again." })
+    local _cfgPaste = ""
+    local cfgIn = cfgTab:AddInput("ahf_cfgcode", { Title = "Config code", Default = "", Placeholder = "paste a config code here, then Load", Numeric = false, Finished = false,
+        Callback = function(v) _cfgPaste = tostring(v or "") end })
+    cfgTab:AddButton({ Title = "📋 Copy my config", Description = "Copies ALL your current settings as a code to your clipboard (and the box above).", Callback = function()
+        local code = exportConfig()
+        local setcb = setclipboard or toclipboard or (syn and syn.write_clipboard)
+        local copied = setcb and select(1, pcall(setcb, code)) or false
+        pcall(function() cfgIn:SetValue(code) end); _cfgPaste = code
+        State.notify("Config", copied and ("Copied! ("..#code.." chars) — paste it on your alt + Load.") or "Clipboard unavailable — copy the code from the box above.", 6)
+    end })
+    cfgTab:AddButton({ Title = "✅ Load config", Description = "Applies the config code in the box above (or your clipboard) to EVERY setting + the panel instantly.", Callback = function()
+        local code = _cfgPaste
+        if (not code or code == "") then
+            local getcb = getclipboard or (syn and syn.get_clipboard)
+            if getcb then local ok, c = pcall(getcb); if ok and type(c) == "string" then code = c end end
+        end
+        if not code or code == "" then State.notify("Config", "Paste a config code into the box first.", 5); return end
+        if importConfig(code) then State.notify("Config", "✅ Config loaded + applied to all settings!", 5)
+        else State.notify("Config", "❌ That's not a valid config code.", 5) end
+    end })
+
     Window:SelectTab(1)
     Fluent:Notify({ Title = "YumaBlox", Content = "Loaded. Pick seeds/gears in the Shop tab.", Duration = 6 })
     if type(SCRIPT_EXPIRES) == "number" then
@@ -4610,8 +4659,10 @@ local function buildGui()
             .. (" (" .. math.floor(left / 86400) .. "d left)")) or "Key EXPIRED"
         Fluent:Notify({ Title = "YumaBlox Key", Content = msg, Duration = 7 })
     end
-    -- force every control to match the LOADED State (Fluent's Default handling — esp. a false default
-    -- and the SelectTab tab-show — is unreliable). Still inside the uiBuilding guard so these don't save.
+    -- force every control to match the CURRENT State. Wrapped as refreshUI() so it can be re-applied
+    -- after importing a config code. uiBuilding guards the SetValues so they don't trigger saves.
+    local function refreshUI()
+        local prev = uiBuilding; uiBuilding = true
     pcall(function() hT:SetValue(State.running) end)
     pcall(function() sT:SetValue(State.autoSell) end)
     pcall(function() spdT:SetValue(State.harvestSpeed) end)
@@ -4649,6 +4700,10 @@ local function buildGui()
     pcall(function() gearDD:SetValue(State.buyGears) end)
     pcall(function() petDD:SetValue(State.buyPets) end)
     pcall(function() cwT:SetValue(State.autoCollectWild) end)
+        uiBuilding = prev
+    end
+    State.refreshUI = refreshUI
+    refreshUI()
     uiBuilding = false   -- everything synced to loaded State -> real user changes now apply + save
 
     -- AUTO-POPULATE the shop catalogs: the SeedShop/GearShop GUIs aren't built yet when this panel
