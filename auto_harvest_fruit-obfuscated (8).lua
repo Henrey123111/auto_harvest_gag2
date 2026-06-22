@@ -3730,8 +3730,7 @@ local MAIL_MAX_BATCH = 20
 local MAIL_GAP       = 6
 local _psc
 local function mailInventory()
-    if _psc == nil then
-        _psc = false
+    if not _psc then                          -- RETRY each call until PlayerStateClient is ready (was cached as false forever -> picker stuck empty)
         pcall(function()
             local m = ReplicatedStorage:FindFirstChild("PlayerStateClient", true)
             if m then _psc = require(m) end
