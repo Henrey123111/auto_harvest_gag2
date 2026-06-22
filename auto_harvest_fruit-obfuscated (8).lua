@@ -484,27 +484,32 @@ local CFG_FILE = "AutoHarvestFruit_config.json"
 local _hasFiles = typeof(writefile) == "function" and typeof(readfile) == "function" and typeof(isfile) == "function"
 local uiBuilding = false   -- true while buildGui constructs controls; ignore their initial OnChanged fires
 
+local function configTable()     -- portable settings snapshot — used by BOTH save-to-file AND export-as-code
+    return {
+        running = State.running, autoSell = State.autoSell, sellMode = State.sellMode, autoBuy = State.autoBuy, autoBuyPets = State.autoBuyPets,
+        buyOnce = State.buyOnce,
+        harvestSpeed = State.harvestSpeed,
+        autoSteal = State.autoSteal, protectBase = State.protectBase, snipeAuto = State.snipeAuto, snipeRar = State.snipeRar, snipePets = State.snipePets,
+        snipeSkipOld = State.snipeSkipOld, snipeMaxAge = State.snipeMaxAge,
+        antiAfk = State.antiAfk, antiFling = State.antiFling, antiFlingReset = State.antiFlingReset,
+        antiWheelbarrow = State.antiWheelbarrow, antiShovel = State.antiShovel, lockPosition = State.lockPosition, autoShovelHit = State.autoShovelHit, autoProtectPets = State.autoProtectPets,
+        autoWater = State.autoWater, autoPlant = State.autoPlant, plantSeeds = State.plantSeeds,
+        autoMail = State.autoMail, mailTo = State.mailTo, mailItems = State.mailItems, mailLeave = State.mailLeave,
+        plantSpacing = State.plantSpacing, plantMode = State.plantMode, autoSprinkle = State.autoSprinkle, sprinkleMutations = State.sprinkleMutations,
+        cleanupTypes = State.cleanupTypes,
+        buySeeds = State.buySeeds, buyGears = State.buyGears, buyPets = State.buyPets,
+        eventSeeds = State.eventSeeds, autoCollectWild = State.autoCollectWild,
+        perfMode = State.perfMode, hidePlants = State.hidePlants, hideAvatar = State.hideAvatar,
+        limitHarvestKg = State.limitHarvestKg, maxHarvestKg = State.maxHarvestKg, espWeight = State.espWeight,
+    }
+end
+local function serializeConfig()     -- State -> JSON string (NO file needed; works on mobile)
+    local ok, s = pcall(function() return HttpService:JSONEncode(configTable()) end)
+    return (ok and type(s) == "string") and s or "{}"
+end
 local function saveConfig()
     if not _hasFiles or uiBuilding then return end
-    pcall(function()
-        writefile(CFG_FILE, HttpService:JSONEncode({
-            running = State.running, autoSell = State.autoSell, sellMode = State.sellMode, autoBuy = State.autoBuy, autoBuyPets = State.autoBuyPets,
-            buyOnce = State.buyOnce,
-            harvestSpeed = State.harvestSpeed,
-            autoSteal = State.autoSteal, protectBase = State.protectBase, snipeAuto = State.snipeAuto, snipeRar = State.snipeRar, snipePets = State.snipePets,
-            snipeSkipOld = State.snipeSkipOld, snipeMaxAge = State.snipeMaxAge,
-            antiAfk = State.antiAfk, antiFling = State.antiFling, antiFlingReset = State.antiFlingReset,
-            antiWheelbarrow = State.antiWheelbarrow, antiShovel = State.antiShovel, lockPosition = State.lockPosition, autoShovelHit = State.autoShovelHit, autoProtectPets = State.autoProtectPets,
-            autoWater = State.autoWater, autoPlant = State.autoPlant, plantSeeds = State.plantSeeds,
-            autoMail = State.autoMail, mailTo = State.mailTo, mailItems = State.mailItems, mailLeave = State.mailLeave,
-            plantSpacing = State.plantSpacing, plantMode = State.plantMode, autoSprinkle = State.autoSprinkle, sprinkleMutations = State.sprinkleMutations,
-            cleanupTypes = State.cleanupTypes,
-            buySeeds = State.buySeeds, buyGears = State.buyGears, buyPets = State.buyPets,
-            eventSeeds = State.eventSeeds, autoCollectWild = State.autoCollectWild,
-            perfMode = State.perfMode, hidePlants = State.hidePlants, hideAvatar = State.hideAvatar,
-            limitHarvestKg = State.limitHarvestKg, maxHarvestKg = State.maxHarvestKg, espWeight = State.espWeight,
-        }))
-    end)
+    pcall(function() writefile(CFG_FILE, serializeConfig()) end)
 end
 
 local function normSet(t)   -- coerce any on-disk shape (dict/array/mixed) into a clean {string = true} set
@@ -518,12 +523,8 @@ local function normSet(t)   -- coerce any on-disk shape (dict/array/mixed) into 
     return s
 end
 
-local function loadConfig()
-    if not _hasFiles then return end
-    pcall(function()
-        if not isfile(CFG_FILE) then return end
-        local d = HttpService:JSONDecode(readfile(CFG_FILE))
-        if type(d) ~= "table" then return end
+local function applyConfigTable(d)   -- apply a DECODED settings table straight to State — NO filesystem needed (mobile-safe)
+    if type(d) ~= "table" then return false end
         if type(d.running)     == "boolean" then State.running     = d.running end
         if type(d.harvestSpeed) == "number" then State.harvestSpeed = math.clamp(d.harvestSpeed, 1, 10); State.fireGap = math.max(0, (10 - State.harvestSpeed) * 0.025) end
         if type(d.autoSell)    == "boolean" then State.autoSell    = d.autoSell end
@@ -582,6 +583,14 @@ local function loadConfig()
         if type(d.limitHarvestKg) == "boolean" then State.limitHarvestKg = d.limitHarvestKg end
         if type(d.maxHarvestKg)   == "number"  then State.maxHarvestKg   = math.clamp(d.maxHarvestKg, 1, 1000) end
         if type(d.espWeight)      == "boolean" then State.espWeight      = d.espWeight end
+    return true
+end
+
+local function loadConfig()     -- restore from disk (only path that needs the filesystem)
+    if not _hasFiles then return end
+    pcall(function()
+        if not isfile(CFG_FILE) then return end
+        applyConfigTable(HttpService:JSONDecode(readfile(CFG_FILE)))
     end)
 end
 
@@ -590,19 +599,17 @@ State.saveConfig = saveConfig   -- exposed for the UI handlers + reset
 
 -- ── CONFIG SHARING: export/import a portable code so settings can be reused on another account/device ──
 local function exportConfig()
-    pcall(saveConfig)                                              -- flush current State to disk first
-    local ok, s = pcall(function() return readfile(CFG_FILE) end)
-    return (ok and type(s) == "string" and #s > 1) and s or "{}"
+    pcall(saveConfig)              -- also persist to disk if the executor supports files
+    return serializeConfig()       -- build the code straight from State — works with NO files (mobile)
 end
 local function importConfig(code)
     if type(code) ~= "string" then return false end
     code = (code:gsub("^%s+", ""):gsub("%s+$", ""))
     local ok, d = pcall(function() return HttpService:JSONDecode(code) end)
     if not ok or type(d) ~= "table" then return false end          -- not a valid config code
-    if not _hasFiles then return false end
-    pcall(function() writefile(CFG_FILE, code) end)                -- persist for next launch
-    pcall(loadConfig)                                              -- re-read into State (reads the file we just wrote)
-    pcall(function() if State.refreshUI then State.refreshUI() end end)   -- sync every UI control to the new State
+    if not applyConfigTable(d) then return false end               -- APPLY straight to State — no filesystem required (mobile-safe)
+    if _hasFiles then pcall(function() writefile(CFG_FILE, code) end) end   -- persist for next launch ONLY if the executor has files
+    pcall(function() if State.refreshUI then State.refreshUI() end end)     -- sync every UI control to the new State
     return true
 end
 State.exportConfig, State.importConfig = exportConfig, importConfig
