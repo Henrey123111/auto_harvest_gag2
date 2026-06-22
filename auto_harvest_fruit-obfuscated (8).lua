@@ -1748,6 +1748,10 @@ local function savedKey()
     end
     return nil
 end
+local function rememberKey(k)            -- persist a validated key so the Enter-Key popup is SKIPPED next execute
+    if getgenv then pcall(function() getgenv().YB_KEY = k end) end       -- getgenv survives a RE-EXECUTE even with NO files (mobile) — fixes the re-prompt
+    if _hasFiles then pcall(function() writefile(KEY_FILE, k) end) end   -- file also survives a full rejoin (PC executors)
+end
 
 local function runKeyGate()
     if _YB.validated then                                -- served via /script (key was in the URL)
@@ -1755,8 +1759,8 @@ local function runKeyGate()
         if validateKey(_YB.userKey) then return true end -- HWID matches/binds on this device -> ok
         -- HWID mismatch (key used on another device) -> fall through to the popup
     end
-    local sk = savedKey()                                -- a saved, still-valid key skips the prompt
-    if sk and validateKey(sk) then State.userKey = sk; return true end
+    local ck = (getgenv and getgenv().YB_KEY) or savedKey()   -- getgenv cache survives a re-execute (mobile-safe); file survives a rejoin (PC)
+    if ck and validateKey(ck) then State.userKey = ck; rememberKey(ck); return true end
 
     local result = nil
     local gui = Instance.new("ScreenGui")
@@ -1818,7 +1822,7 @@ local function runKeyGate()
         task.spawn(function()
             local v, exp = validateKey(k)
             if v then
-                if _hasFiles then pcall(function() writefile(KEY_FILE, k) end) end
+                rememberKey(k)
                 State.userKey = k
                 status.Text = "Valid! Loading…"; status.TextColor3 = Color3.fromRGB(90, 220, 90)
                 task.wait(0.4); pcall(function() gui:Destroy() end); result = true
