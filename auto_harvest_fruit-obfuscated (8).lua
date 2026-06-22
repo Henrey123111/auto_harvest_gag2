@@ -181,7 +181,7 @@ local State = {
     alive = true, running = AUTO_START, autoSell = AUTO_SELL, sellMode = SELL_MODE, sellDelay = SELL_DELAY, autoBuy = AUTO_BUY, autoBuyPets = AUTO_BUY_PETS,
     autoSteal = AUTO_STEAL,
     protectBase = false,   -- PROTECT BASE: at night, stand inside your own garden so IsInOwnGarden=true -> nobody can steal from you
-    autoMail = false, mailTo = "", mailItems = {}, mailLeave = 0, mailStatus = "off", mailSent = 0,   -- AUTO MAIL: auto-repeat gift item types (multi) to a recipient. mailItems = { {cat=,typeName=}, ... }
+    autoMail = false, mailTo = "", mailItems = {}, mailQty = 1, mailStatus = "off", mailSent = 0,   -- AUTO MAIL: send `mailQty` of each picked type per batch, only when owned >= mailQty. mailItems = { {cat=,typeName=}, ... }
     buySeeds = {}, buyGears = {}, buyPets = {},    -- sets: name -> true
     buyOnce = false, buyArmed = true,              -- "Buy Once Only": when on, buy a single pet then disarm until next snipe-arrival re-arms it
     harvested = 0, fires = 0, sold = 0, bought = 0, stolen = 0,
@@ -495,7 +495,7 @@ local function configTable()     -- portable settings snapshot — used by BOTH 
         antiAfk = State.antiAfk, antiFling = State.antiFling, antiFlingReset = State.antiFlingReset,
         antiWheelbarrow = State.antiWheelbarrow, antiShovel = State.antiShovel, lockPosition = State.lockPosition, autoShovelHit = State.autoShovelHit, autoProtectPets = State.autoProtectPets,
         autoWater = State.autoWater, autoPlant = State.autoPlant, plantSeeds = State.plantSeeds,
-        autoMail = State.autoMail, mailTo = State.mailTo, mailItems = State.mailItems, mailLeave = State.mailLeave,
+        autoMail = State.autoMail, mailTo = State.mailTo, mailItems = State.mailItems, mailQty = State.mailQty,
         plantSpacing = State.plantSpacing, plantMode = State.plantMode, autoSprinkle = State.autoSprinkle, sprinkleMutations = State.sprinkleMutations,
         cleanupTypes = State.cleanupTypes,
         buySeeds = State.buySeeds, buyGears = State.buyGears, buyPets = State.buyPets,
@@ -562,7 +562,7 @@ local function applyConfigTable(d)   -- apply a DECODED settings table straight 
         if type(d.mailItemType) == "string" and type(d.mailItemCat) == "string" then  -- migrate old single pick
             State.mailItems[#State.mailItems + 1] = { cat = d.mailItemCat, typeName = d.mailItemType }
         end
-        if type(d.mailLeave)    == "number"  then State.mailLeave    = math.clamp(d.mailLeave, 0, 10000) end
+        if type(d.mailQty)     == "number"  then State.mailQty     = math.clamp(d.mailQty, 1, 20) end
         if type(d.plantSpacing) == "number" then State.plantSpacing = d.plantSpacing end
         if type(d.plantMode)    == "string" then State.plantMode    = d.plantMode end
         if type(d.autoSprinkle) == "boolean" then State.autoSprinkle = d.autoSprinkle end
@@ -3782,32 +3782,35 @@ local function mailItemLabels()
     return labels, map
 end
 -- build ONE send batch (<=20 items total) drawing from ALL selected types, keeping `leave` of EACH type
-local function mailGatherMulti(picks, leave)
+local function mailGatherMulti(picks, qty)
     local inv = mailInventory(); if type(inv) ~= "table" then return nil end
-    leave = tonumber(leave) or 0
+    qty = math.max(1, tonumber(qty) or 1)
     local out, budget = {}, MAIL_MAX_BATCH
     for _, p in ipairs(picks or {}) do
         if budget <= 0 then break end
         local items = inv[p.cat]
         if type(items) == "table" then
-            local avail = 0
+            -- count how many of this type you own (stackable count, or unique unequipped units)
+            local owned = 0
             for key, entry in pairs(items) do
                 if type(entry) == "number" then
-                    if tostring(key) == p.typeName then avail = avail + entry end
+                    if tostring(key) == p.typeName then owned = owned + entry end
                 elseif entry.Equipped ~= true and mailTypeName(entry, key) == p.typeName then
-                    avail = avail + 1
+                    owned = owned + 1
                 end
             end
-            local canSend = math.min(math.max(0, avail - leave), budget)
-            for key, entry in pairs(items) do
-                if canSend <= 0 then break end
-                if type(entry) == "number" then
-                    if tostring(key) == p.typeName then
-                        local c = math.min(entry, canSend)
-                        if c > 0 then out[#out + 1] = { Category = p.cat, ItemKey = key, Count = c }; canSend = canSend - c; budget = budget - c end
+            if owned >= qty then                          -- ONLY send when you hold at least `qty` of this type (so it stops once you'd dip below qty)
+                local take = math.min(qty, budget)
+                for key, entry in pairs(items) do
+                    if take <= 0 then break end
+                    if type(entry) == "number" then
+                        if tostring(key) == p.typeName then
+                            local c = math.min(entry, take)
+                            if c > 0 then out[#out + 1] = { Category = p.cat, ItemKey = key, Count = c }; take = take - c; budget = budget - c end
+                        end
+                    elseif entry.Equipped ~= true and mailTypeName(entry, key) == p.typeName then
+                        out[#out + 1] = { Category = p.cat, ItemKey = key, Count = 1 }; take = take - 1; budget = budget - 1
                     end
-                elseif entry.Equipped ~= true and mailTypeName(entry, key) == p.typeName then
-                    out[#out + 1] = { Category = p.cat, ItemKey = key, Count = 1 }; canSend = canSend - 1; budget = budget - 1
                 end
             end
         end
@@ -3836,9 +3839,9 @@ local function tryMail(manual)
         if not uid then State.mailStatus = "can't find '" .. name .. "' (" .. tostring(err) .. ")"; return end
         _mailUid, _mailUidName = uid, name
     end
-    local items = mailGatherMulti(State.mailItems, State.mailLeave)
+    local items = mailGatherMulti(State.mailItems, State.mailQty)
     if items == nil then State.mailStatus = "inventory unavailable"; return end
-    if #items == 0 then State.mailStatus = ("nothing to send (kept 'leave %d' / none owned)"):format(tonumber(State.mailLeave) or 0); return end
+    if #items == 0 then State.mailStatus = ("waiting — need %d+ of a picked item"):format(tonumber(State.mailQty) or 1); return end
     local send = packet("Mailbox", "SendBatch"); if not send then State.mailStatus = "no SendBatch remote"; return end
     local ok, result, result2 = pcall(function() return send:Fire(_mailUid, items, "") end)
     if not ok then State.mailStatus = "send error"; return end
@@ -3937,7 +3940,7 @@ local function buildGui()
     local mailT = Window:AddTab({ Title = "Mail",     Icon = "" })
     local cfgTab = Window:AddTab({ Title = "Config",  Icon = "" })
     local misc  = Window:AddTab({ Title = "Settings", Icon = "" })
-    local mailPar, mailToIn, mailItemDD, mailLeaveS, autoMailT, _miMap   -- forward-declared (Reset, restore + refresh loop reference them)
+    local mailPar, mailToIn, mailItemDD, mailQtyS, autoMailT, _miMap   -- forward-declared (Reset, restore + refresh loop reference them)
 
     ---------------------------------------------------------------- FARM
     local statPar = farm:AddParagraph({ Title = "Live stats", Content = "starting…" })
@@ -4580,7 +4583,7 @@ local function buildGui()
         State.protectBase = false
         State.sellMode, State.sellDelay = "Instant", 3
         State.limitHarvestKg, State.maxHarvestKg, State.espWeight = false, 50, false
-        State.autoMail, State.mailTo, State.mailItems, State.mailLeave, State.mailStatus = false, "", {}, 0, "off"
+        State.autoMail, State.mailTo, State.mailItems, State.mailQty, State.mailStatus = false, "", {}, 1, "off"
         State.buyOnce, State.buyArmed = false, true
         State.buySeeds, State.buyGears, State.buyPets = {}, {}, {}
         State.harvestSpeed, State.fireGap = 6, FIRE_INTERVAL
@@ -4610,7 +4613,7 @@ local function buildGui()
         pcall(function() cwT:SetValue(false) end);     pcall(function() evDD:SetValue(setToArray({ Gold = true, Rainbow = true })) end)
         pcall(function() wT:SetValue(false) end);      pcall(function() plT:SetValue(false) end);   pcall(function() spT:SetValue(false) end)
         pcall(function() plDD:SetValue({}) end)
-        pcall(function() if autoMailT then autoMailT:SetValue(false) end end);  pcall(function() if mailLeaveS then mailLeaveS:SetValue(0) end end);  pcall(function() if mailToIn then mailToIn:SetValue("") end end);  pcall(function() if mailItemDD then mailItemDD:SetValue({}) end end)
+        pcall(function() if autoMailT then autoMailT:SetValue(false) end end);  pcall(function() if mailQtyS then mailQtyS:SetValue(1) end end);  pcall(function() if mailToIn then mailToIn:SetValue("") end end);  pcall(function() if mailItemDD then mailItemDD:SetValue({}) end end)
         pcall(function() plSp:SetValue(2) end);        pcall(function() spMutT:SetValue(false) end);   pcall(function() plMode:SetValue("Random") end)
         pcall(function() cleanDD:SetValue({}) end)
         pcall(function() snAutoT:SetValue(false) end); pcall(function() snRarDD:SetValue(setToArray({ Legendary = true, Mythic = true, Super = true })) end);   pcall(function() if snPetDD then snPetDD:SetValue({}) end end)
@@ -4636,8 +4639,8 @@ local function buildGui()
         for _, lab in ipairs(labels) do local g = map[lab]; if g then for _, p in ipairs(State.mailItems or {}) do if p.cat == g.cat and p.typeName == g.typeName then _selLabels[#_selLabels + 1] = lab; break end end end end
         mailItemDD = mailT:AddDropdown("ahf_mailitem", { Title = "Items to send", Description = "Pick items to mail.", Values = labels, Multi = true, Default = _selLabels })
         mailItemDD:OnChanged(function(v) if uiBuilding then return end; local arr = {}; for lab in pairs(setFromMulti(v)) do local g = _miMap and _miMap[lab]; if g then arr[#arr + 1] = { cat = g.cat, typeName = g.typeName } end end; State.mailItems = arr; saveConfig() end)
-        mailLeaveS = mailT:AddSlider("ahf_mailleave", { Title = "Leave at least", Description = "Keep this many.", Default = State.mailLeave or 0, Min = 0, Max = 200, Rounding = 0 })
-        mailLeaveS:OnChanged(function(v) if uiBuilding then return end; State.mailLeave = v; saveConfig() end)
+        mailQtyS = mailT:AddSlider("ahf_mailqty", { Title = "Send quantity (per item)", Description = "How many of EACH picked item to send per batch (only when you own at least this many).", Default = State.mailQty or 1, Min = 1, Max = 20, Rounding = 0 })
+        mailQtyS:OnChanged(function(v) if uiBuilding then return end; State.mailQty = v; saveConfig() end)
         autoMailT = mailT:AddToggle("ahf_automail", { Title = "Auto Mail (repeat send)", Description = "Keep mailing the items to the recipient.", Default = State.autoMail })
         autoMailT:OnChanged(function(v) if uiBuilding then return end; State.autoMail = v; if not v then State.mailStatus = "off" end; saveConfig() end)
         mailT:AddButton({ Title = "Send one batch now", Description = "Send one batch now.", Callback = function() task.spawn(function() pcall(tryMail, true) end) end })
@@ -4668,7 +4671,7 @@ local function buildGui()
     end })
     cfgTab:AddParagraph({ Title = "Presets", Content = "One-click ready-made setups." })
     cfgTab:AddButton({ Title = "⚡ AutoFarm", Description = "Apply the built-in AutoFarm setup instantly.", Callback = function()
-        local code = [[{"espWeight":false,"autoSell":false,"snipeSkipOld":true,"harvestSpeed":6,"autoShovelHit":false,"autoPlant":false,"running":false,"autoBuy":false,"sprinkleMutations":false,"antiWheelbarrow":false,"antiFlingReset":false,"buyOnce":false,"lockPosition":false,"mailLeave":0,"autoWater":false,"antiShovel":false,"mailTo":"","sellMode":"Instant","autoSprinkle":false,"antiFling":false,"perfMode":false,"antiAfk":true,"plantSeeds":[],"limitHarvestKg":false,"eventSeeds":{"Rainbow":true,"Gold":true},"autoProtectPets":false,"protectBase":false,"autoSteal":false,"buyGears":{"Uncommon Sprinkler":true,"Rare Sprinkler":true,"Legendary Sprinkler":true,"Common Sprinkler":true,"Super Sprinkler":true,"Trowel":true,"Super Watering Can":true},"mailItems":[],"maxHarvestKg":50,"hideAvatar":false,"hidePlants":false,"snipeRar":{"Mythic":true,"Legendary":true,"Super":true},"cleanupTypes":[],"autoCollectWild":false,"buyPets":[],"buySeeds":{"Green Bean":true,"Grape":true,"Coconut":true,"Tulip":true,"Tomato":true,"Moon Bloom":true,"Apple":true,"Venus Fly Trap":true,"Venom Spitter":true,"Sunflower":true,"Mushroom":true,"Corn":true,"Dragon's Breath":true,"Pomegranate":true,"Dragon Fruit":true,"Cherry":true,"Pineapple":true,"Blueberry":true,"Carrot":true,"Mango":true,"Cactus":true,"Strawberry":true,"Bamboo":true,"Poison Apple":true,"Acorn":true,"Banana":true},"plantMode":"Random","plantSpacing":2,"snipePets":[],"snipeMaxAge":5,"autoMail":false,"autoBuyPets":false,"snipeAuto":false}]]
+        local code = [[{"espWeight":false,"autoSell":false,"snipeSkipOld":true,"harvestSpeed":6,"autoShovelHit":false,"autoPlant":false,"running":false,"autoBuy":false,"sprinkleMutations":false,"antiWheelbarrow":false,"antiFlingReset":false,"buyOnce":false,"lockPosition":false,"mailQty":1,"autoWater":false,"antiShovel":false,"mailTo":"","sellMode":"Instant","autoSprinkle":false,"antiFling":false,"perfMode":false,"antiAfk":true,"plantSeeds":[],"limitHarvestKg":false,"eventSeeds":{"Rainbow":true,"Gold":true},"autoProtectPets":false,"protectBase":false,"autoSteal":false,"buyGears":{"Uncommon Sprinkler":true,"Rare Sprinkler":true,"Legendary Sprinkler":true,"Common Sprinkler":true,"Super Sprinkler":true,"Trowel":true,"Super Watering Can":true},"mailItems":[],"maxHarvestKg":50,"hideAvatar":false,"hidePlants":false,"snipeRar":{"Mythic":true,"Legendary":true,"Super":true},"cleanupTypes":[],"autoCollectWild":false,"buyPets":[],"buySeeds":{"Green Bean":true,"Grape":true,"Coconut":true,"Tulip":true,"Tomato":true,"Moon Bloom":true,"Apple":true,"Venus Fly Trap":true,"Venom Spitter":true,"Sunflower":true,"Mushroom":true,"Corn":true,"Dragon's Breath":true,"Pomegranate":true,"Dragon Fruit":true,"Cherry":true,"Pineapple":true,"Blueberry":true,"Carrot":true,"Mango":true,"Cactus":true,"Strawberry":true,"Bamboo":true,"Poison Apple":true,"Acorn":true,"Banana":true},"plantMode":"Random","plantSpacing":2,"snipePets":[],"snipeMaxAge":5,"autoMail":false,"autoBuyPets":false,"snipeAuto":false}]]
         if importConfig(code) then State.notify("Config", "✅ AutoFarm config loaded + applied!", 5)
         else State.notify("Config", "❌ AutoFarm config failed to load.", 5) end
     end })
@@ -4717,7 +4720,7 @@ local function buildGui()
     pcall(function() stT:SetValue(State.autoSteal) end)
     pcall(function() protectBaseT:SetValue(State.protectBase) end)
     pcall(function() if autoMailT then autoMailT:SetValue(State.autoMail) end end)
-    pcall(function() if mailLeaveS then mailLeaveS:SetValue(State.mailLeave) end end)
+    pcall(function() if mailQtyS then mailQtyS:SetValue(State.mailQty) end end)
     pcall(function() if mailToIn then mailToIn:SetValue(State.mailTo or "") end end)
     pcall(function() if mailItemDD and _miMap then local t = {} for label, g in pairs(_miMap) do for _, p in ipairs(State.mailItems or {}) do if p.cat == g.cat and p.typeName == g.typeName then t[label] = true; break end end end mailItemDD:SetValue(t) end end)
     pcall(function() snAutoT:SetValue(State.snipeAuto) end)
