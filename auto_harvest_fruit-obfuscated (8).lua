@@ -4771,46 +4771,66 @@ local function buildGui()
     end)
 
     ---------------------------------------------------------------- live refresh
+    -- MOBILE PERF: only refresh the paragraph of the tab currently ON SCREEN, and skip
+    -- Fluent's costly text-bounds recompute when the text hasn't changed (dirty-check).
+    -- Before, every 0.5s this rebuilt 9 paragraphs + scanned 33 shop items + all plots
+    -- regardless of the visible tab — the main cause of mobile lag (and dropped taps).
+    local _lastDesc = {}
+    local function tabVisible(tab)
+        local ok, v = pcall(function() return tab.Container.Visible end)
+        if not ok then return true end   -- can't tell → update anyway (safe fallback to old behaviour)
+        return v
+    end
+    local function setDescIf(par, key, text)
+        if not par or _lastDesc[key] == text then return end
+        _lastDesc[key] = text
+        pcall(function() par:SetDesc(text) end)
+    end
     local stealTick = 0
     task.spawn(function()
         while State.alive and not Fluent.Unloaded do
             refreshInventory()
             local fc  = math.floor(tonumber(State.fruitCount) or 0)
             local cap = math.floor(tonumber(State.maxFruit) or 0)
-            pcall(function()
-                statPar:SetDesc(("Harvested: %d      Sold: %d\nInventory: %d / %d\nRipe now: %d\nStatus: %s")
+            if tabVisible(farm) then
+                setDescIf(statPar, "stat", ("Harvested: %d      Sold: %d\nInventory: %d / %d\nRipe now: %d\nStatus: %s")
                     :format(State.harvested, State.sold, fc, cap, State.ripe, State.status))
-            end)
-            -- steal status (cheap every tick) + top-targets list (throttled — scanning all plots is heavier)
-            local night = isNight()
-            pcall(function()
-                stealPar:SetDesc(("Night now: %s   (stealing only works at night)\nStolen: %d\nStatus: %s")
+            end
+            -- STEAL: status (cheap) + top-targets list (HEAVY plot scan) — only while the Steal tab is on screen
+            if tabVisible(stealT) then
+                local night = isNight()
+                setDescIf(stealPar, "steal", ("Night now: %s   (stealing only works at night)\nStolen: %d\nStatus: %s")
                     :format(night and "YES 🌙" or "no ☀️", State.stolen, State.stealStatus))
-            end)
-            pcall(function() if mailPar then mailPar:SetDesc(("Sent: %d\nStatus: %s"):format(State.mailSent or 0, tostring(State.mailStatus or "off"))) end end)
-            stealTick = (stealTick + 1) % 4
-            if stealTick == 0 then
-                local tt = scanStealTargets(8)
-                local tl = {}
-                for _, t in ipairs(tt) do
-                    tl[#tl + 1] = ("%s   val %d   (x%.2f)"):format(t.name, math.floor(t.value + 0.5), tonumber(t.fruit:GetAttribute("SizeMulti")) or 1)
-                end
-                pcall(function() targetPar:SetDesc(#tl > 0 and table.concat(tl, "\n") or "no stealable fruit found in server") end)
-            end
-            local lines = {}
-            for _, spec in ipairs(SHOPS) do
-                for name in pairs(State[spec.sel]) do
-                    lines[#lines + 1] = ("%s   x%d"):format(name, shopStock(spec.gui, name))
+                stealTick = (stealTick + 1) % 4
+                if stealTick == 0 then
+                    local tt = scanStealTargets(8)
+                    local tl = {}
+                    for _, t in ipairs(tt) do
+                        tl[#tl + 1] = ("%s   val %d   (x%.2f)"):format(t.name, math.floor(t.value + 0.5), tonumber(t.fruit:GetAttribute("SizeMulti")) or 1)
+                    end
+                    setDescIf(targetPar, "target", #tl > 0 and table.concat(tl, "\n") or "no stealable fruit found in server")
                 end
             end
-            if next(State.buyPets) then
-                local spawned, wps = {}, wildPetSpawns()
-                if wps then for _, m in ipairs(wps:GetChildren()) do local n = m:GetAttribute("PetName"); if n then spawned[n] = (spawned[n] or 0) + 1 end end end
-                for name in pairs(State.buyPets) do lines[#lines + 1] = ("%s (pet)   x%d wild"):format(name, spawned[name] or 0) end
+            if tabVisible(mailT) then
+                setDescIf(mailPar, "mail", ("Sent: %d\nStatus: %s"):format(State.mailSent or 0, tostring(State.mailStatus or "off")))
             end
-            table.sort(lines)
-            pcall(function() stockPar:SetDesc(#lines > 0 and table.concat(lines, "\n") or "nothing selected") end)
-            if State.ui and State.ui.eventPar then
+            -- SHOP: one shop-GUI tree-walk per selected item (33 in the AutoFarm preset) — only while the Shop tab is on screen
+            if tabVisible(shop) then
+                local lines = {}
+                for _, spec in ipairs(SHOPS) do
+                    for name in pairs(State[spec.sel]) do
+                        lines[#lines + 1] = ("%s   x%d"):format(name, shopStock(spec.gui, name))
+                    end
+                end
+                if next(State.buyPets) then
+                    local spawned, wps = {}, wildPetSpawns()
+                    if wps then for _, m in ipairs(wps:GetChildren()) do local n = m:GetAttribute("PetName"); if n then spawned[n] = (spawned[n] or 0) + 1 end end end
+                    for name in pairs(State.buyPets) do lines[#lines + 1] = ("%s (pet)   x%d wild"):format(name, spawned[name] or 0) end
+                end
+                table.sort(lines)
+                setDescIf(stockPar, "stock", #lines > 0 and table.concat(lines, "\n") or "nothing selected")
+            end
+            if State.ui and State.ui.eventPar and tabVisible(eventT) then
                 -- count Gold/Rainbow seed packs spawned on the map right now (Map.SeedPackSpawn* folders)
                 local wildN = 0
                 local map = Workspace:FindFirstChild("Map")
@@ -4822,34 +4842,34 @@ local function buildGui()
                 end
                 local head = State.autoCollectWild and (State.collectStatus or "watching…") or "OFF — toggle on to arm"
                 local moon = wildN > 0 and "🌙 EVENT ACTIVE" or "no event right now"
-                pcall(function() State.ui.eventPar:SetDesc(("%s\nStatus: %s\nSeeds on map now: %d\nPicked up: %d")
-                    :format(moon, head, wildN, State.wildCollected)) end)
+                setDescIf(State.ui.eventPar, "event", ("%s\nStatus: %s\nSeeds on map now: %d\nPicked up: %d")
+                    :format(moon, head, wildN, State.wildCollected))
             end
-            if State.ui and State.ui.farmPar then
-                pcall(function() State.ui.farmPar:SetDesc(("Water: %s  (%d)\nPlant: %s  (%d)\nSprinkler: %s  (%d)\nCleanup: %s  (%d)\nPack: %s")
+            if State.ui and State.ui.farmPar and tabVisible(fhT) then
+                setDescIf(State.ui.farmPar, "fhelp", ("Water: %s  (%d)\nPlant: %s  (%d)\nSprinkler: %s  (%d)\nCleanup: %s  (%d)\nPack: %s")
                     :format(State.autoWater and State.waterStatus or "off", State.watered,
                             State.autoPlant and State.plantStatus or "off", State.planted,
                             State.autoSprinkle and State.sprinkleStatus or "off", State.sprinkled,
                             State.cleanupStatus or "off", State.cleaned or 0,
-                            State.stackStatus or "off")) end)
+                            State.stackStatus or "off"))
             end
-            if State.ui and State.ui.weatherPar then
+            if State.ui and State.ui.weatherPar and tabVisible(weaT) then
                 local function fmt(s) s = math.max(0, math.floor(s or 0)); return s >= 60 and ("%dm %02ds"):format(math.floor(s / 60), s % 60) or (s .. "s") end
                 local cur
                 if State.weatherNow then
                     cur = ("Phase: %s\nWeather: %s\nPhase ends in: %s"):format(tostring(State.weatherPhase or "?"), tostring(State.weatherStatus), fmt(State.weatherLeft))
                     if State.tonightW and State.weatherPhase ~= "Night" then cur = cur .. ("\nTonight's roll: %s"):format(tostring(State.tonightW)) end
                 else cur = "reading cycle…" end
-                pcall(function() State.ui.weatherPar:SetDesc(cur) end)
+                setDescIf(State.ui.weatherPar, "weather", cur)
             end
-            if State.ui and State.ui.weatherFcPar then
+            if State.ui and State.ui.weatherFcPar and tabVisible(weaT) then
                 local function fmt(s) s = math.max(0, math.floor(s or 0)); if s >= 3600 then return ("%dh %dm"):format(math.floor(s / 3600), math.floor((s % 3600) / 60)) end return s >= 60 and ("%dm %02ds"):format(math.floor(s / 60), s % 60) or (s .. "s") end
                 local function line(label, secs) if secs == nil then return label .. ": none in next 48h" end if secs <= 0 then return label .. ": ACTIVE NOW 🌙" end return ("%s in %s"):format(label, fmt(secs)) end
                 local calib = State.weatherCalib
                 local hdr = (calib == "ok" and "✓ verified vs server last night")
                     or (calib and ("⚠ " .. calib .. " — server differs, forecast unreliable"))
                     or "estimate — server has final say (confirms at next night)"
-                pcall(function() State.ui.weatherFcPar:SetDesc(hdr .. "\n" .. table.concat({ line("Next Gold Moon", State.nextGold), line("Next Rainbow Moon", State.nextRbow), line("Next Blood Moon", State.nextBlood) }, "\n")) end)
+                setDescIf(State.ui.weatherFcPar, "weatherfc", hdr .. "\n" .. table.concat({ line("Next Gold Moon", State.nextGold), line("Next Rainbow Moon", State.nextRbow), line("Next Blood Moon", State.nextBlood) }, "\n"))
             end
             waitFn(0.5)
         end
