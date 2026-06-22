@@ -4651,6 +4651,12 @@ local function buildGui()
         if importConfig(code) then State.notify("Config", "✅ Config loaded + applied to all settings!", 5)
         else State.notify("Config", "❌ That's not a valid config code.", 5) end
     end })
+    cfgTab:AddParagraph({ Title = "Presets", Content = "One-click ready-made setups." })
+    cfgTab:AddButton({ Title = "⚡ AutoFarm", Description = "Apply the built-in AutoFarm setup instantly.", Callback = function()
+        local code = [[{"espWeight":false,"autoSell":true,"snipeSkipOld":true,"harvestSpeed":6,"autoShovelHit":false,"autoPlant":false,"running":true,"autoBuy":false,"sprinkleMutations":false,"antiWheelbarrow":true,"antiFlingReset":false,"buyOnce":false,"lockPosition":true,"mailLeave":0,"autoWater":false,"antiShovel":true,"mailTo":"","sellMode":"Instant","autoSprinkle":false,"antiFling":true,"perfMode":false,"antiAfk":true,"plantSeeds":[],"limitHarvestKg":false,"eventSeeds":{"Rainbow":true,"Gold":true},"autoProtectPets":true,"protectBase":true,"autoSteal":false,"buyGears":[],"mailItems":[{"cat":"Pets","typeName":"Unicorn"}],"maxHarvestKg":50,"hideAvatar":true,"hidePlants":true,"snipeRar":{"Mythic":true,"Legendary":true,"Super":true},"cleanupTypes":[],"autoCollectWild":true,"buyPets":[],"buySeeds":[],"plantMode":"Random","plantSpacing":2,"snipePets":[],"snipeMaxAge":5,"autoMail":false,"autoBuyPets":false,"snipeAuto":false}]]
+        if importConfig(code) then State.notify("Config", "✅ AutoFarm config loaded + applied!", 5)
+        else State.notify("Config", "❌ AutoFarm config failed to load.", 5) end
+    end })
 
     Window:SelectTab(1)
     Fluent:Notify({ Title = "YumaBlox", Content = "Loaded. Pick seeds/gears in the Shop tab.", Duration = 6 })
