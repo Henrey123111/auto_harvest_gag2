@@ -3934,15 +3934,15 @@ local function buildGui()
     sT:OnChanged(function(v) if uiBuilding then return end; State.autoSell = v; saveConfig() end)
     local spdT = farm:AddSlider("ahf_speed", {
         Title = "Harvest Speed",
-        Description = "Higher = faster. 10 = MAX (fires every frame). Very high speeds may drop a few fires (server rate-limit ~1/frame).",
+        Description = "Higher = faster (10 = max).",
         Default = State.harvestSpeed, Min = 1, Max = 10, Rounding = 0,
     })
     spdT:OnChanged(function(v) if uiBuilding then return end; State.harvestSpeed = v; State.fireGap = math.max(0, (10 - v) * 0.025); saveConfig() end)
-    local wlimT = farm:AddToggle("ahf_wlim", { Title = "Limit harvest weight", Description = "Only harvest fruit AT OR BELOW the kg set below — anything heavier is left on the plant to keep growing.", Default = State.limitHarvestKg })
+    local wlimT = farm:AddToggle("ahf_wlim", { Title = "Limit harvest weight", Description = "Skip fruit above the weight set below.", Default = State.limitHarvestKg })
     wlimT:OnChanged(function(v) if uiBuilding then return end; State.limitHarvestKg = v; saveConfig() end)
     local wmaxT = farm:AddSlider("ahf_wmax", {
         Title = "Max harvest weight (kg)",
-        Description = "While 'Limit harvest weight' is on, fruit heavier than this is skipped.",
+        Description = "Skip fruit above this weight.",
         Default = State.maxHarvestKg, Min = 1, Max = 1000, Rounding = 0,
     })
     wmaxT:OnChanged(function(v) if uiBuilding then return end; State.maxHarvestKg = v; saveConfig() end)
@@ -3952,66 +3952,66 @@ local function buildGui()
     bT:OnChanged(function(v) if uiBuilding then return end; State.autoBuy = v; saveConfig() end)
     local seedDD = shop:AddDropdown("ahf_seeds", { Title = "Seeds to buy", Description = "tick the seeds to auto-buy", Values = shopItems("SeedShop"), Multi = true, Default = setToArray(State.buySeeds) })
     seedDD:OnChanged(function(v) if uiBuilding then return end; State.buySeeds = setFromMulti(v); saveConfig() end)
-    shop:AddButton({ Title = "Select ALL seeds", Description = "Tick every seed currently in the shop list.", Callback = function()
+    shop:AddButton({ Title = "Select ALL seeds", Description = "Tick all seeds.", Callback = function()
         local set = {}; for _, n in ipairs(seedDD.Values or {}) do set[n] = true end   -- Fluent multi takes a {name=true} dict, and Values is the live option list
         State.buySeeds = set; pcall(function() seedDD:SetValue(set) end); saveConfig()
     end })
     local gearDD = shop:AddDropdown("ahf_gears", { Title = "Gears to buy", Description = "tick the gears to auto-buy", Values = shopItems("GearShop"), Multi = true, Default = setToArray(State.buyGears) })
     gearDD:OnChanged(function(v) if uiBuilding then return end; State.buyGears = setFromMulti(v); saveConfig() end)
-    shop:AddButton({ Title = "Select ALL gears", Description = "Tick every gear currently in the shop list.", Callback = function()
+    shop:AddButton({ Title = "Select ALL gears", Description = "Tick all gears.", Callback = function()
         local set = {}; for _, n in ipairs(gearDD.Values or {}) do set[n] = true end
         State.buyGears = set; pcall(function() gearDD:SetValue(set) end); saveConfig()
     end })
-    local petT = shop:AddToggle("ahf_buypets", { Title = "Auto Buy Pets  (teleports!)", Description = "Teleports to wild pets and buys the types you tick. Buys contested pets too (already bought by another player but still walking). Off by default — it moves your character.", Default = State.autoBuyPets })
+    local petT = shop:AddToggle("ahf_buypets", { Title = "Auto Buy Pets  (teleports!)", Description = "Buy ticked wild pets (teleports).", Default = State.autoBuyPets })
     petT:OnChanged(function(v) if uiBuilding then return end; State.autoBuyPets = v; State.buyArmed = true; saveConfig() end)
-    local petOnceT = shop:AddToggle("ahf_buyonce", { Title = "Buy Once Only", Description = "Buy just ONE pet, then pause buying until the next snipe-join (or you re-toggle Auto Buy Pets). Stops it from spending on every pet in the server.", Default = State.buyOnce })
+    local petOnceT = shop:AddToggle("ahf_buyonce", { Title = "Buy Once Only", Description = "Buy one pet per snipe-join.", Default = State.buyOnce })
     petOnceT:OnChanged(function(v) if uiBuilding then return end; State.buyOnce = v; State.buyArmed = true; saveConfig() end)
-    local petDD = shop:AddDropdown("ahf_pets", { Title = "Pets to buy", Description = "pick wild-pet types to auto-buy (12 total; Refresh updates)", Values = getPetTypes(), Multi = true, Default = setToArray(State.buyPets) })
+    local petDD = shop:AddDropdown("ahf_pets", { Title = "Pets to buy", Description = "Pick pet types to buy.", Values = getPetTypes(), Multi = true, Default = setToArray(State.buyPets) })
     petDD:OnChanged(function(v) if uiBuilding then return end; State.buyPets = setFromMulti(v); saveConfig() end)
     local stockPar = shop:AddParagraph({ Title = "Selected — in stock now", Content = "—" })
     State.ui = { harvest = hT, sell = sT, buy = bT, buypets = petT, seeds = seedDD, gears = gearDD, pets = petDD }
 
     ---------------------------------------------------------------- MOON EVENTS
     eventT:AddParagraph({ Title = "🌙 Moon Events — Wild Gold & Rainbow Seeds",
-        Content = "During a Gold Moon / Rainbow Moon, Gold & Rainbow seeds rain onto the map as collectibles.\nArm this and it teleports onto each one and picks it up the instant it spawns, then restores your position." })
+        Content = "Teleport-collect rain seeds during Moon events." })
     local cwT = eventT:AddToggle("ahf_collectwild", {
         Title = "Auto-Pickup Wild Seeds  (teleports!)",
-        Description = "Watches the map for the seeds below and grabs each the moment it drops. Off by default — it moves your character.",
+        Description = "Grab event seeds as they spawn.",
         Default = State.autoCollectWild,
     })
     cwT:OnChanged(function(v) if uiBuilding then return end; State.autoCollectWild = v; saveConfig() end)
-    local evDD = eventT:AddDropdown("ahf_eventseed_list", { Title = "Seeds to pick up", Description = "the Moon event only spawns these two in the wild", Values = { "Gold", "Rainbow" }, Multi = true, Default = setToArray(State.eventSeeds) })
+    local evDD = eventT:AddDropdown("ahf_eventseed_list", { Title = "Seeds to pick up", Description = "Only these spawn in the wild.", Values = { "Gold", "Rainbow" }, Multi = true, Default = setToArray(State.eventSeeds) })
     evDD:OnChanged(function(v) if uiBuilding then return end; State.eventSeeds = setFromMulti(v); saveConfig() end)
     local evPar = eventT:AddParagraph({ Title = "Status", Content = "off" })
     State.ui.eventDD = evDD; State.ui.eventPar = evPar; State.ui.collectWild = cwT
 
     ---------------------------------------------------------------- FARM HELPERS
     fhT:AddParagraph({ Title = "Auto Farm Actions",
-        Content = "Water / plant / sprinkle on YOUR plot. Each needs the matching tool owned or equipped. They do NOT move your character.\nIf nothing registers in-game, stand on your plot — the server may need you nearby." })
-    local wT = fhT:AddToggle("ahf_water", { Title = "Auto Water", Description = "Waters every plant on your plot to speed growth. Needs a Watering Can.", Default = State.autoWater })
+        Content = "Water / plant / sprinkle. Needs the matching tools." })
+    local wT = fhT:AddToggle("ahf_water", { Title = "Auto Water", Description = "Speed plant growth. Needs a Watering Can.", Default = State.autoWater })
     wT:OnChanged(function(v) if uiBuilding then return end; State.autoWater = v; saveConfig() end)
-    local plT = fhT:AddToggle("ahf_plant", { Title = "Auto Plant", Description = "Fills empty plot cells with the seed below. Needs that seed owned.", Default = State.autoPlant })
+    local plT = fhT:AddToggle("ahf_plant", { Title = "Auto Plant", Description = "Plant the seeds below.", Default = State.autoPlant })
     plT:OnChanged(function(v) if uiBuilding then return end; State.autoPlant = v; saveConfig() end)
-    local plDD = fhT:AddDropdown("ahf_plantseed", { Title = "Seeds to plant", Description = "Pick one or more (rotates through what you own). '(x0)' = not owned yet — plants once you get it. Empty = any owned.", Values = allSeedLabels(), Multi = true, Default = plantSeedLabels() })
+    local plDD = fhT:AddDropdown("ahf_plantseed", { Title = "Seeds to plant", Description = "Rotates through owned seeds; '(x0)' = not owned yet.", Values = allSeedLabels(), Multi = true, Default = plantSeedLabels() })
     plDD:OnChanged(function(v) if uiBuilding then return end; local set = {}; for label in pairs(setFromMulti(v)) do local nm = seedFromLabel(label); if nm and nm ~= "" then set[nm] = true end end; State.plantSeeds = set; saveConfig() end)
-    local plSp = fhT:AddSlider("ahf_plantspace", { Title = "Plant spacing (studs)", Description = "Gap for Random mode (server min is 1.5).", Default = State.plantSpacing, Min = 1.5, Max = 4, Rounding = 1 })
+    local plSp = fhT:AddSlider("ahf_plantspace", { Title = "Plant spacing (studs)", Description = "Gap for Random mode (min 1.5).", Default = State.plantSpacing, Min = 1.5, Max = 4, Rounding = 1 })
     plSp:OnChanged(function(v) if uiBuilding then return end; State.plantSpacing = v; saveConfig() end)
-    local plMode = fhT:AddDropdown("ahf_plantmode", { Title = "Seed placement", Description = "Where Auto Plant puts the SEEDS: Random = scattered around the plot. Grid = neat lined-up rows at the spacing above (server min 1.5 studs). At my feet = on the spot you're standing on (walk to lay a trail).", Values = { "Random", "Grid", "At my feet" }, Multi = false, Default = State.plantMode or "Random" })
+    local plMode = fhT:AddDropdown("ahf_plantmode", { Title = "Seed placement", Description = "Random / Grid / At my feet.", Values = { "Random", "Grid", "At my feet" }, Multi = false, Default = State.plantMode or "Random" })
     plMode:OnChanged(function(v) if uiBuilding then return end; State.plantMode = v; saveConfig() end)
-    fhT:AddButton({ Title = "Pack plants near me (Trowel)", Description = "Uses the TROWEL to move ALL your plants into a tight 1-stud grid next to where you stand — PERMANENT + server-side. Needs a Trowel owned. (Server only blocks the exact same cell, so this packs them basically touching.)", Callback = function()
+    fhT:AddButton({ Title = "Pack plants near me (Trowel)", Description = "Pack all plants to a 1-stud grid. Needs Trowel.", Callback = function()
         task.spawn(function() pcall(tryPackPlants) end)
     end })
-    fhT:AddButton({ Title = "Refresh owned seeds", Description = "Re-scan your Backpack for owned seeds (after buying/using)", Callback = function()
+    fhT:AddButton({ Title = "Refresh owned seeds", Description = "Rescan backpack for seeds.", Callback = function()
         pcall(function() plDD:SetValues(allSeedLabels()) end)
     end })
-    local spT = fhT:AddToggle("ahf_sprinkle", { Title = "Auto Place Sprinklers", Description = "Keeps the size-luck at the 100 cap on your densest plants using the FEWEST sprinklers (1 Super = 100), auto-replacing each as it expires (120s).", Default = State.autoSprinkle })
+    local spT = fhT:AddToggle("ahf_sprinkle", { Title = "Auto Place Sprinklers", Description = "Hold 100 size-luck with the fewest sprinklers.", Default = State.autoSprinkle })
     spT:OnChanged(function(v) if uiBuilding then return end; State.autoSprinkle = v; saveConfig() end)
-    local spMutT = fhT:AddToggle("ahf_sprinkle_mut", { Title = "Sprinklers: max mutations", Description = "Off = pure size (fewest sprinklers to 100 luck). On = stack one of EVERY owned tier (past the cap = more mutation chance, uses more sprinklers).", Default = State.sprinkleMutations })
+    local spMutT = fhT:AddToggle("ahf_sprinkle_mut", { Title = "Sprinklers: max mutations", Description = "On = stack all tiers for mutations.", Default = State.sprinkleMutations })
     spMutT:OnChanged(function(v) if uiBuilding then return end; State.sprinkleMutations = v; saveConfig() end)
 
-    local cleanDD = fhT:AddDropdown("ahf_cleanup", { Title = "Cleanup: plant types to remove", Description = "tick types, then tap 'Cleanup now'. Shovels them out of your garden — PERMANENT. Needs a Shovel.", Values = gardenPlantTypes(), Multi = true, Default = setToArray(State.cleanupTypes) })
+    local cleanDD = fhT:AddDropdown("ahf_cleanup", { Title = "Cleanup: plant types to remove", Description = "Shovel out the ticked types. Needs Shovel.", Values = gardenPlantTypes(), Multi = true, Default = setToArray(State.cleanupTypes) })
     cleanDD:OnChanged(function(v) if uiBuilding then return end; State.cleanupTypes = setFromMulti(v); saveConfig() end)
-    fhT:AddButton({ Title = "Cleanup now (shovel selected)", Description = "Dig up every plant of the ticked types. ~0.75s each (server cooldown). PERMANENT.", Callback = function()
+    fhT:AddButton({ Title = "Cleanup now (shovel selected)", Description = "Dig up the ticked plant types.", Callback = function()
         task.spawn(function() pcall(tryCleanup) end)
     end })
 
@@ -4024,9 +4024,7 @@ local function buildGui()
     local weaPar = weaT:AddParagraph({ Title = "Current phase + weather", Content = "reading cycle…" })
     local weaFcPar = weaT:AddParagraph({ Title = "🌙 Moon forecast (deterministic)", Content = "computing…" })
     weaT:AddParagraph({ Title = "How it works",
-        Content = "Night weather is a fixed roll seeded by the day-cycle number (floor(os.time()/600)). " ..
-                  "Moon 79%, Gold Moon 13%, Rainbow Moon 6%, Blood Moon 2%. This panel replicates the game's exact " ..
-                  "roll, so the countdowns to the next Gold/Rainbow Moon are precise — not estimates." })
+        Content = "Exact, deterministic Moon countdowns." })
     State.ui.weatherPar = weaPar
     State.ui.weatherFcPar = weaFcPar
 
@@ -4034,18 +4032,18 @@ local function buildGui()
     local stealPar = stealT:AddParagraph({ Title = "Steal status", Content = "…" })
     local stT = stealT:AddToggle("ahf_steal", {
         Title = "Auto Steal  (NIGHT only — teleports!)",
-        Description = "Steals the most valuable fruit in the server, then teleports back to your base. Only works at night; it moves your character.",
+        Description = "Steal fruit at night (teleports).",
         Default = State.autoSteal,
     })
     stT:OnChanged(function(v) if uiBuilding then return end; State.autoSteal = v; saveConfig() end)
     local protectBaseT = stealT:AddToggle("ahf_protectbase", {
         Title = "Protect Base at Night (stand guard)",
-        Description = "At night, keeps your character standing INSIDE your own garden so the plot is LOCKED — nobody can steal your fruit while you're home. Snaps you back instantly if you're pushed/flung out. Pauses Auto Steal while active (you can't guard home and raid others at the same time).",
+        Description = "Guard your base at night (un-stealable).",
         Default = State.protectBase,
     })
     protectBaseT:OnChanged(function(v) if uiBuilding then return end; State.protectBase = v; saveConfig() end)
     local targetPar = stealT:AddParagraph({ Title = "Top targets (value = sell price × size)", Content = "—" })
-    stealT:AddButton({ Title = "Steal one now", Description = "Manually grab the single most valuable fruit (night only)", Callback = function()
+    stealT:AddButton({ Title = "Steal one now", Description = "Steal one now (night).", Callback = function()
         task.spawn(function() pcall(trySteal) end)
     end })
     State.ui.steal = stT
@@ -4167,7 +4165,7 @@ local function buildGui()
     ---------------------------------------------------------------- SNIPE (auto-join config)
     local snAutoT = snipeT:AddToggle("ahf_snipe_auto", {
         Title = "Auto-Snipe  (TELEPORTS you!)",
-        Description = "Instantly teleport to the rarest available pet matching the rarities below. Off by default — it moves you out of your garden.",
+        Description = "Teleport to the rarest matching pet.",
         Default = State.snipeAuto,
     })
     snAutoT:OnChanged(function(v) if uiBuilding then return end; State.snipeAuto = v; State.snipedJob = nil; saveConfig() end)
@@ -4175,21 +4173,21 @@ local function buildGui()
     local snPetDD   -- forward-declared so the rarity dropdown's OnChanged can refresh it
     local snRarDD = snipeT:AddDropdown("ahf_snipe_rar", { Title = "Auto-Snipe rarities", Description = "which rarities trigger an instant join", Values = RARITIES, Multi = true, Default = setToArray(State.snipeRar) })
     snRarDD:OnChanged(function(v) if uiBuilding then return end; State.snipeRar = setFromMulti(v); pcall(function() if snPetDD then snPetDD:SetValues(snipePetCatalog()) end end); saveConfig() end)
-    snPetDD = snipeT:AddDropdown("ahf_snipe_pets", { Title = "Pets to snipe (optional)", Description = "Empty = all pets of the chosen rarities. Pick some to snipe only those.", Values = snipePetCatalog(), Multi = true, Default = setToArray(State.snipePets) })
+    snPetDD = snipeT:AddDropdown("ahf_snipe_pets", { Title = "Pets to snipe (optional)", Description = "Empty = all of the rarities; or pick specific pets.", Values = snipePetCatalog(), Multi = true, Default = setToArray(State.snipePets) })
     snPetDD:OnChanged(function(v) if uiBuilding then return end; State.snipePets = setFromMulti(v); saveConfig() end)
-    snipeT:AddButton({ Title = "Refresh pet list", Description = "Re-read the pets for the currently-selected rarities.", Callback = function() pcall(function() if snPetDD then snPetDD:SetValues(snipePetCatalog()) end end) end })
+    snipeT:AddButton({ Title = "Refresh pet list", Description = "Update pet list.", Callback = function() pcall(function() if snPetDD then snPetDD:SetValues(snipePetCatalog()) end end) end })
     State.ui.snipeRar = snRarDD; State.ui.snipeAuto = snAutoT; State.ui.snipePets = snPetDD
 
     local snSkipOldT = snipeT:AddToggle("ahf_snipe_skipold", {
         Title = "Only join freshest servers",
-        Description = "Skip any pet server that isn't brand-new (competitors already joined). ON by default — only joins '0s ago' popups.",
+        Description = "Only join brand-new servers.",
         Default = State.snipeSkipOld,
     })
     snSkipOldT:OnChanged(function(v) if uiBuilding then return end; State.snipeSkipOld = v; saveConfig() end)
 
     local snMaxAgeS = snipeT:AddSlider("ahf_snipe_maxage", {
         Title = "Max server age (seconds)",
-        Description = "Skip servers seen longer ago than this. 5 = recommended (absorbs the ~3s report→poll delay so fresh servers actually join). Lower = stricter (min 3), higher = looser.",
+        Description = "Max server age, seconds (5 = best).",
         Min = 3, Max = 15, Default = State.snipeMaxAge, Rounding = 0,
     })
     snMaxAgeS:OnChanged(function(v) if uiBuilding then return end; State.snipeMaxAge = v; saveConfig() end)
@@ -4510,21 +4508,21 @@ local function buildGui()
     misc:AddParagraph({ Title = "Performance", Content = "Reduces GPU/CPU load. Wild pet spawns are never hidden." })
     local perfT = misc:AddToggle("ahf_perfmode", {
         Title = "Performance Mode",
-        Description = "Disables shadows, post-effects (Blur/DepthOfField/etc.), all particles and beams (except wild pets), caps FPS at 30. Toggle off to restore.",
+        Description = "Disable effects, cap FPS at 30.",
         Default = State.perfMode,
     })
     perfT:OnChanged(function(v) if uiBuilding then return end; State.perfMode = v; pcall(applyPerfMode, v); saveConfig() end)
 
     local hidePlantsT = misc:AddToggle("ahf_hideplants", {
         Title = "Hide ALL Gardens (plants/fruits/garden)",
-        Description = "Makes EVERY garden invisible — including your own — plants, fruits, decorations, signs & sprinklers. Newly-grown fruits hidden too. Harvesting still works (it's purely visual). Big render-load reduction.",
+        Description = "Hide all gardens (visual only).",
         Default = State.hidePlants,
     })
     hidePlantsT:OnChanged(function(v) if uiBuilding then return end; State.hidePlants = v; pcall(applyHidePlants, v); saveConfig() end)
 
     local hideAvatarT = misc:AddToggle("ahf_hideavatar", {
         Title = "Hide Avatar Accessories",
-        Description = "Makes your outfit accessories invisible client-side only. Speeds up rendering slightly.",
+        Description = "Hide your accessories.",
         Default = State.hideAvatar,
     })
     hideAvatarT:OnChanged(function(v) if uiBuilding then return end; State.hideAvatar = v; pcall(applyHideAvatar, v); saveConfig() end)
@@ -4532,25 +4530,25 @@ local function buildGui()
     misc:AddParagraph({ Title = "Fruit info", Content = "Show each fruit's weight (kg) and sell price floating in your garden." })
     local espWT = misc:AddToggle("ahf_espweight", {
         Title = "Show Fruit Weight + Price",
-        Description = "Floats a 'kg | $price' label over every fruit in YOUR garden. Weight = SizeMulti x 7.5; price uses the game's own value formula (no mutation bonus).",
+        Description = "Show kg + price over each fruit.",
         Default = State.espWeight,
     })
     espWT:OnChanged(function(v) if uiBuilding then return end; State.espWeight = v; saveConfig() end)
 
     ---------------------------------------------------------------- SETTINGS
-    local afkT = misc:AddToggle("ahf_antiafk", { Title = "Anti-AFK", Description = "Stops the 20-min idle kick AND the game's idle server-hop. Safe to leave on.", Default = State.antiAfk })
+    local afkT = misc:AddToggle("ahf_antiafk", { Title = "Anti-AFK", Description = "Stop idle kick + server-hop.", Default = State.antiAfk })
     afkT:OnChanged(function(v) if uiBuilding then return end; State.antiAfk = v; saveConfig() end)
-    local flingT = misc:AddToggle("ahf_antifling", { Title = "Anti-Fling (perfect)", Description = "Movement-aware: predicts your intended motion every frame and cancels ANY velocity/spin/teleport the game didn't cause. Impossible to fling whether moving OR standing still. Doesn't fight walking, jumping or the bot's teleports.", Default = State.antiFling })
+    local flingT = misc:AddToggle("ahf_antifling", { Title = "Anti-Fling (perfect)", Description = "Block flings (won't fight your movement).", Default = State.antiFling })
     flingT:OnChanged(function(v) if uiBuilding then return end; State.antiFling = v; saveConfig() end)
-    local wbT = misc:AddToggle("ahf_antiwb", { Title = "Anti-Wheelbarrow", Description = "Use the wheelbarrow SOLO (defeats the 'Friend in Server Required' gate) AND auto-escapes if another player carts you in their wheelbarrow.", Default = State.antiWheelbarrow })
+    local wbT = misc:AddToggle("ahf_antiwb", { Title = "Anti-Wheelbarrow", Description = "Solo wheelbarrow + auto-escape.", Default = State.antiWheelbarrow })
     wbT:OnChanged(function(v) if uiBuilding then return end; State.antiWheelbarrow = v; saveConfig() end)
-    local antiShovelT = misc:AddToggle("ahf_antishovel", { Title = "Anti-Shovel (block enemy whacks)", Description = "The instant another player's shovel hits you, cancels the knockback and forces you out of any ragdoll/stun. Reacts to the game's own hit signal, so it never breaks legit sitting. Works even with Anti-Fling off.", Default = State.antiShovel })
+    local antiShovelT = misc:AddToggle("ahf_antishovel", { Title = "Anti-Shovel (block enemy whacks)", Description = "Block enemy shovel knockback.", Default = State.antiShovel })
     antiShovelT:OnChanged(function(v) if uiBuilding then return end; State.antiShovel = v; saveConfig() end)
-    local shovelHitT = misc:AddToggle("ahf_shovelhit", { Title = "Auto-Shovel Hit (whack enemies)", Description = "LONGER + AGGRESSIVE: dashes to close the gap on any enemy within ~28 studs, whacks them, snaps back — and multi-hits everyone in front each swing (~0.5s). 12 studs is the server's hard hit cap, so it charges to reach further. Equips + faces automatically. Needs a Shovel in your backpack.", Default = State.autoShovelHit })
+    local shovelHitT = misc:AddToggle("ahf_shovelhit", { Title = "Auto-Shovel Hit (whack enemies)", Description = "Whack nearby enemies. Needs a Shovel.", Default = State.autoShovelHit })
     shovelHitT:OnChanged(function(v) if uiBuilding then return end; State.autoShovelHit = v; saveConfig() end)
-    local protectT = misc:AddToggle("ahf_protectpets", { Title = "Escort Bought Pets", Description = "A pet you buy WALKS to your garden and can be re-bought/stolen by others the whole way. This follows your walking pets so Auto-Shovel Hit whacks any thief who comes within steal range. Turn ON Auto-Shovel Hit too for it to actually protect.", Default = State.autoProtectPets })
+    local protectT = misc:AddToggle("ahf_protectpets", { Title = "Escort Bought Pets", Description = "Whack thieves chasing your bought pets.", Default = State.autoProtectPets })
     protectT:OnChanged(function(v) if uiBuilding then return end; State.autoProtectPets = v; if v and not State.autoShovelHit then State.autoShovelHit = true; pcall(function() shovelHitT:SetValue(true) end) end; saveConfig() end)
-    local lockT = misc:AddToggle("ahf_lockpos", { Title = "Lock Position (anti-push)", Description = "Locks you in place while idle so others can't shove your body — and auto-unlocks the instant you move (WASD/joystick/touch), then re-locks ~0.3s after you stop. Walk normally; just can't be pushed when standing still.", Default = State.lockPosition })
+    local lockT = misc:AddToggle("ahf_lockpos", { Title = "Lock Position (anti-push)", Description = "Block pushes while standing still.", Default = State.lockPosition })
     lockT:OnChanged(function(v) if uiBuilding then return end; State.lockPosition = v; if not v then pcall(function() local c = LocalPlayer.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.Anchored = false end end) end; saveConfig() end)
     misc:AddButton({ Title = "Refresh shop catalogs", Description = "Re-read the seed, gear & pet lists", Callback = function()
         pcall(function() seedDD:SetValues(shopItems("SeedShop")) end)
@@ -4561,7 +4559,7 @@ local function buildGui()
     misc:AddButton({ Title = "Reset settings", Description = "Clear ALL toggles & selections back to defaults", Callback = function()
         uiBuilding = true   -- suppress each control's OnChanged save; we write once below
         -- restore EVERY config-backed field to its default
-        State.running, State.autoSell, State.autoBuy, State.autoBuyPets, State.autoSteal = true, true, true, false, false
+        State.running, State.autoSell, State.autoBuy, State.autoBuyPets, State.autoSteal = false, false, false, false, false   -- Reset = clean slate: ALL automation OFF
         State.protectBase = false
         State.limitHarvestKg, State.maxHarvestKg, State.espWeight = false, 50, false
         State.autoMail, State.mailTo, State.mailItems, State.mailLeave, State.mailStatus = false, "", {}, 0, "off"
@@ -4584,8 +4582,8 @@ local function buildGui()
         pcall(applyPerfMode, false); pcall(applyHidePlants, false); pcall(applyHideAvatar, false)   -- undo the on-screen effects, not just the flags
         pcall(function() local c = LocalPlayer.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.Anchored = false end end)
         -- push every value into its matching UI control (multi-dropdowns take the array form)
-        pcall(function() hT:SetValue(true) end);       pcall(function() sT:SetValue(true) end)
-        pcall(function() bT:SetValue(true) end);       pcall(function() petT:SetValue(false) end)
+        pcall(function() hT:SetValue(false) end);      pcall(function() sT:SetValue(false) end)
+        pcall(function() bT:SetValue(false) end);      pcall(function() petT:SetValue(false) end)
         pcall(function() petOnceT:SetValue(false) end)
         pcall(function() stT:SetValue(false) end);     pcall(function() spdT:SetValue(6) end)
         pcall(function() protectBaseT:SetValue(false) end)
@@ -4608,7 +4606,7 @@ local function buildGui()
         Fluent:Notify({ Title = "YumaBlox", Content = "All settings reset to defaults.", Duration = 3 })
     end })
     misc:AddButton({ Title = "Unload / Stop", Description = "Stop the bot and close this window", Callback = function() State.cleanup() end })
-    misc:AddParagraph({ Title = "Tips", Content = "Settings are saved & restored when you rejoin.\nRight Shift minimizes / restores the window.\nSteal works at NIGHT only and teleports you (grab + return to base).\nClosing the window stops the bot." })
+    misc:AddParagraph({ Title = "Tips", Content = "Settings auto-save.\nRight Shift hides the window.\nSteal works at night only." })
 
     ---------------------------------------------------------------- MAIL (auto-repeat gift)
     pcall(function()
@@ -4618,29 +4616,29 @@ local function buildGui()
         local labels, map = mailItemLabels(); _miMap = map
         local _selLabels = {}
         for _, lab in ipairs(labels) do local g = map[lab]; if g then for _, p in ipairs(State.mailItems or {}) do if p.cat == g.cat and p.typeName == g.typeName then _selLabels[#_selLabels + 1] = lab; break end end end end
-        mailItemDD = mailT:AddDropdown("ahf_mailitem", { Title = "Items to send", Description = "Pick ONE OR MORE sendable items (type, category, count). Auto Mail funnels all of them (up to 20 per gift). Use 'Refresh' after your inventory changes.", Values = labels, Multi = true, Default = _selLabels })
+        mailItemDD = mailT:AddDropdown("ahf_mailitem", { Title = "Items to send", Description = "Pick items to mail.", Values = labels, Multi = true, Default = _selLabels })
         mailItemDD:OnChanged(function(v) if uiBuilding then return end; local arr = {}; for lab in pairs(setFromMulti(v)) do local g = _miMap and _miMap[lab]; if g then arr[#arr + 1] = { cat = g.cat, typeName = g.typeName } end end; State.mailItems = arr; saveConfig() end)
-        mailLeaveS = mailT:AddSlider("ahf_mailleave", { Title = "Leave at least", Description = "Keep this many of the item; mail the rest.", Default = State.mailLeave or 0, Min = 0, Max = 200, Rounding = 0 })
+        mailLeaveS = mailT:AddSlider("ahf_mailleave", { Title = "Leave at least", Description = "Keep this many.", Default = State.mailLeave or 0, Min = 0, Max = 200, Rounding = 0 })
         mailLeaveS:OnChanged(function(v) if uiBuilding then return end; State.mailLeave = v; saveConfig() end)
-        autoMailT = mailT:AddToggle("ahf_automail", { Title = "Auto Mail (repeat send)", Description = "Looks up the recipient, then keeps mailing the selected item to them (up to 20 per gift) until only 'leave at least' remain.", Default = State.autoMail })
+        autoMailT = mailT:AddToggle("ahf_automail", { Title = "Auto Mail (repeat send)", Description = "Keep mailing the items to the recipient.", Default = State.autoMail })
         autoMailT:OnChanged(function(v) if uiBuilding then return end; State.autoMail = v; if not v then State.mailStatus = "off" end; saveConfig() end)
-        mailT:AddButton({ Title = "Send one batch now", Description = "Send a single batch (up to 20) immediately, even with Auto Mail off.", Callback = function() task.spawn(function() pcall(tryMail, true) end) end })
+        mailT:AddButton({ Title = "Send one batch now", Description = "Send one batch now.", Callback = function() task.spawn(function() pcall(tryMail, true) end) end })
         mailT:AddButton({ Title = "Refresh sendable items", Description = "Re-read your inventory into the picker.", Callback = function() pcall(function() local l, m = mailItemLabels(); _miMap = m; mailItemDD:SetValues(l) end) end })
     end)
 
     ---------------------------------------------------------------- CONFIG (share settings across accounts)
-    cfgTab:AddParagraph({ Title = "Share your settings", Content = "Copy a config code, then paste it on another account/device and Load — no need to set everything up again." })
+    cfgTab:AddParagraph({ Title = "Share your settings", Content = "Reuse your settings on another account — Copy here, Load there." })
     local _cfgPaste = ""
     local cfgIn = cfgTab:AddInput("ahf_cfgcode", { Title = "Config code", Default = "", Placeholder = "paste a config code here, then Load", Numeric = false, Finished = false,
         Callback = function(v) _cfgPaste = tostring(v or "") end })
-    cfgTab:AddButton({ Title = "📋 Copy my config", Description = "Copies ALL your current settings as a code to your clipboard (and the box above).", Callback = function()
+    cfgTab:AddButton({ Title = "📋 Copy my config", Description = "Copy settings to clipboard.", Callback = function()
         local code = exportConfig()
         local setcb = setclipboard or toclipboard or (syn and syn.write_clipboard)
         local copied = setcb and select(1, pcall(setcb, code)) or false
         pcall(function() cfgIn:SetValue(code) end); _cfgPaste = code
         State.notify("Config", copied and ("Copied! ("..#code.." chars) — paste it on your alt + Load.") or "Clipboard unavailable — copy the code from the box above.", 6)
     end })
-    cfgTab:AddButton({ Title = "✅ Load config", Description = "Applies the config code in the box above (or your clipboard) to EVERY setting + the panel instantly.", Callback = function()
+    cfgTab:AddButton({ Title = "✅ Load config", Description = "Apply a pasted config.", Callback = function()
         local code = _cfgPaste
         if (not code or code == "") then
             local getcb = getclipboard or (syn and syn.get_clipboard)
