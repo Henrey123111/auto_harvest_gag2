@@ -3091,11 +3091,15 @@ do  --[[ ============================================================
                         tpFailed = true; tpResult = res
                     end)
                 end)
-                -- spam TP: 4 join requests over ~1 second (250ms apart)
-                for _s = 1, 4 do
+                -- spam TP. Specific-pet target (snipePets narrowed, e.g. only Raccoon) → keep trying ~10s @ 0.5s
+                -- so we don't lose a high-value pet to a slow/contested join; otherwise a quick 4× burst over ~1s.
+                local _spec  = next(State.snipePets or {}) ~= nil
+                local _tries = _spec and 20 or 4
+                local _gap   = _spec and 0.5 or 0.25
+                for _s = 1, _tries do
                     if tpFailed then break end
                     pcall(function() TS3:TeleportToPlaceInstance(placeId, jobId, LocalPlayer) end)
-                    task.wait(0.25)
+                    task.wait(_gap)
                 end
                 local t0 = os.clock()
                 repeat task.wait(0.1) until tpFailed or (os.clock()-t0 > 3)
@@ -3871,11 +3875,27 @@ local function tryMail(manual)
         local n = 0; for _, it in ipairs(items) do n = n + (tonumber(it.Count) or 1) end
         State.mailSent = (State.mailSent or 0) + n
         State.mailStatus = ("sent %d item(s) -> %s (total %d)"):format(n, name, State.mailSent)
+    elseif tostring(result2 or ""):lower():find("tutorial") then
+        -- the game blocks gifting until the tutorial is done. The tutorial client itself fires Tutorial.Complete
+        -- at early-exit shortcuts, so the server honours it without doing every step -> finish it, then retry once.
+        State.mailStatus = "finishing tutorial to enable gifting…"
+        pcall(function() local t = packet("Tutorial", "Complete"); if t then t:Fire() end end)
+        pcall(function() workspace:SetAttribute("InTutorial", nil) end)
+        task.wait(1.2)
+        local ok2, r1b = pcall(function() return send:Fire(_mailUid, items, "") end)
+        if ok2 and r1b then
+            local n = 0; for _, it in ipairs(items) do n = n + (tonumber(it.Count) or 1) end
+            State.mailSent = (State.mailSent or 0) + n
+            State.mailStatus = ("sent %d item(s) -> %s (total %d)"):format(n, name, State.mailSent)
+        else
+            State.mailStatus = "tutorial still blocking — finish the tutorial in-game once, then retry"
+        end
     else
         State.mailStatus = "rejected: " .. tostring(result2 or "server said no")
     end
 end
 State.tryMail = tryMail
+State.finishTutorial = function() local ok = pcall(function() local t = packet("Tutorial", "Complete"); if t then t:Fire() end; workspace:SetAttribute("InTutorial", nil) end); return ok end
 task.spawn(function()                                        -- auto-mail loop (auto-repeat)
     local _lastNotif
     while State.alive do
@@ -4417,12 +4437,16 @@ local function buildGui()
                                 armReload()   -- re-arm before every attempt in case TeleportInitFailed cleared the queue
                                 -- "0s ago" BF servers: spam 4 join requests over ~1s to beat competitors
                                 -- regular servers: single attempt
-                                if f.source == "bigfroot" and (f.ageSecs or 1) == 0 then
+                                local _spec = next(State.snipePets or {}) ~= nil
+                                if _spec or (f.source == "bigfroot" and (f.ageSecs or 1) == 0) then
+                                    -- specific-pet target → persist ~10s @ 0.5s (20 tries); quick BF burst → 4 @ 0.25s
+                                    local _tries = _spec and 20 or 4
+                                    local _gap   = _spec and 0.5 or 0.25
                                     State.snipeStatus = "⚡ SPAM joining " .. tostring(f.name) .. "…"
-                                    for _s = 1, 4 do
+                                    for _s = 1, _tries do
                                         if tpFailed then break end
                                         pcall(function() TS2:TeleportToPlaceInstance(f.place, jb, LocalPlayer) end)
-                                        task.wait(0.25)   -- 4 requests / 1 second
+                                        task.wait(_gap)
                                     end
                                 else
                                     pcall(function() TS2:TeleportToPlaceInstance(f.place, jb, LocalPlayer) end)
@@ -4674,6 +4698,7 @@ local function buildGui()
         autoMailT:OnChanged(function(v) if uiBuilding then return end; State.autoMail = v; if not v then State.mailStatus = "off" end; saveConfig() end)
         mailT:AddButton({ Title = "Send one batch now", Description = "Send one batch now.", Callback = function() task.spawn(function() pcall(tryMail, true); pcall(function() State.notify("Mail", tostring(State.mailStatus or "?"), 6) end) end) end })
         mailT:AddButton({ Title = "Refresh sendable items", Description = "Re-read your inventory into the picker.", Callback = function() pcall(function() local l, m = mailItemLabels(); _miMap = m; mailItemDD:SetValues(l) end) end })
+        mailT:AddButton({ Title = "✅ Finish tutorial (enables gifting)", Description = "Marks the tutorial complete so the game lets you send gifts.", Callback = function() task.spawn(function() local ok = State.finishTutorial and State.finishTutorial(); State.notify("Mail", ok and "Tutorial marked complete — gifting should work now." or "Couldn't reach the tutorial remote.", 6) end) end })
     end)
 
     ---------------------------------------------------------------- CONFIG (share settings across accounts)
