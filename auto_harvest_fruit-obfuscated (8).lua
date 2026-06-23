@@ -3749,6 +3749,21 @@ local function mailTypeName(entry, key)
     end
     return tostring(key)
 end
+-- ALL mailable types (so you can pre-pick items you DON'T own yet; auto-mail sends them the moment you have >= qty).
+-- Only categories with an unambiguous catalog: seeds, sprinklers, and shop gears (watering cans / trowels).
+local function mailCatalog()
+    local out = {}
+    local function add(c, n) if type(n) == "string" and n ~= "" then out[#out + 1] = { cat = c, typeName = n } end end
+    pcall(function() for _, n in ipairs(allSeedNames()) do add("Seeds", n) end end)
+    pcall(function() for k in pairs(getSprinklerData()) do add("Sprinklers", k) end end)
+    pcall(function()
+        for _, n in ipairs(shopItems("GearShop")) do
+            local c = (n:find("Watering Can") and "WateringCans") or (n:find("Sprinkler") and "Sprinklers") or (n:find("Trowel") and "Trowels") or nil
+            if c then add(c, n) end
+        end
+    end)
+    return out
+end
 -- sendable item TYPES grouped: returns labels[] + map[label] = {cat, typeName, count}
 local function mailItemLabels()
     local inv = mailInventory()
@@ -3770,6 +3785,13 @@ local function mailItemLabels()
             end
         end
     end
+    -- also list catalog types you DON'T own yet (count 0) so they can be pre-selected
+    pcall(function()
+        for _, e in ipairs(mailCatalog()) do
+            local gk = tostring(e.cat) .. "\1" .. tostring(e.typeName)
+            if not groups[gk] then groups[gk] = { cat = e.cat, typeName = e.typeName, count = 0 } end
+        end
+    end)
     local list = {}
     for _, g in pairs(groups) do list[#list + 1] = g end
     table.sort(list, function(a, b) return tostring(a.typeName) < tostring(b.typeName) end)
