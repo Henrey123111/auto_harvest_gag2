@@ -3855,9 +3855,16 @@ local function tryMail(manual)
 end
 State.tryMail = tryMail
 task.spawn(function()                                        -- auto-mail loop (auto-repeat)
+    local _lastNotif
     while State.alive do
-        if State.autoMail then pcall(tryMail); waitFn(MAIL_GAP)
-        else waitFn(0.5) end
+        if State.autoMail then
+            pcall(tryMail)
+            if State.mailStatus ~= _lastNotif then            -- SURFACE the reason as a popup whenever it changes, so silent waits/failures are visible (the status line only shows on the Mail tab)
+                _lastNotif = State.mailStatus
+                pcall(function() State.notify("Auto Mail", tostring(State.mailStatus or ""), 5) end)
+            end
+            waitFn(MAIL_GAP)
+        else _lastNotif = nil; waitFn(0.5) end
     end
 end)
 
@@ -3940,7 +3947,7 @@ local function buildGui()
     local mailT = Window:AddTab({ Title = "Mail",     Icon = "" })
     local cfgTab = Window:AddTab({ Title = "Config",  Icon = "" })
     local misc  = Window:AddTab({ Title = "Settings", Icon = "" })
-    local mailPar, mailToIn, mailItemDD, mailQtyS, autoMailT, _miMap   -- forward-declared (Reset, restore + refresh loop reference them)
+    local mailPar, mailToIn, _mailRender, mailQtyS, autoMailT, _miMap   -- forward-declared. _mailRender() (re)builds the custom mobile item picker; Reset/refreshUI call it.
 
     ---------------------------------------------------------------- FARM
     local statPar = farm:AddParagraph({ Title = "Live stats", Content = "starting…" })
@@ -4613,7 +4620,7 @@ local function buildGui()
         pcall(function() cwT:SetValue(false) end);     pcall(function() evDD:SetValue(setToArray({ Gold = true, Rainbow = true })) end)
         pcall(function() wT:SetValue(false) end);      pcall(function() plT:SetValue(false) end);   pcall(function() spT:SetValue(false) end)
         pcall(function() plDD:SetValue({}) end)
-        pcall(function() if autoMailT then autoMailT:SetValue(false) end end);  pcall(function() if mailQtyS then mailQtyS:SetValue(1) end end);  pcall(function() if mailToIn then mailToIn:SetValue("") end end);  pcall(function() if mailItemDD then mailItemDD:SetValue({}) end end)
+        pcall(function() if autoMailT then autoMailT:SetValue(false) end end);  pcall(function() if mailQtyS then mailQtyS:SetValue(1) end end);  pcall(function() if mailToIn then mailToIn:SetValue("") end end);  pcall(function() if _mailRender then _mailRender() end end)
         pcall(function() plSp:SetValue(2) end);        pcall(function() spMutT:SetValue(false) end);   pcall(function() plMode:SetValue("Random") end)
         pcall(function() cleanDD:SetValue({}) end)
         pcall(function() snAutoT:SetValue(false) end); pcall(function() snRarDD:SetValue(setToArray({ Legendary = true, Mythic = true, Super = true })) end);   pcall(function() if snPetDD then snPetDD:SetValue({}) end end)
@@ -4634,17 +4641,77 @@ local function buildGui()
         mailPar = mailT:AddParagraph({ Title = "Auto Mail status", Content = "off" })
         mailToIn = mailT:AddInput("ahf_mailto", { Title = "Recipient (username)", Default = State.mailTo or "", Placeholder = "exact username", Numeric = false, Finished = true,
             Callback = function(v) if uiBuilding then return end; State.mailTo = tostring(v or ""); _mailUid, _mailUidName = nil, nil; saveConfig() end })
-        local labels, map = mailItemLabels(); _miMap = map
-        local _selLabels = {}
-        for _, lab in ipairs(labels) do local g = map[lab]; if g then for _, p in ipairs(State.mailItems or {}) do if p.cat == g.cat and p.typeName == g.typeName then _selLabels[#_selLabels + 1] = lab; break end end end end
-        mailItemDD = mailT:AddDropdown("ahf_mailitem", { Title = "Items to send", Description = "Pick items to mail.", Values = labels, Multi = true, Default = _selLabels })
-        mailItemDD:OnChanged(function(v) if uiBuilding then return end; local arr = {}; for lab in pairs(setFromMulti(v)) do local g = _miMap and _miMap[lab]; if g then arr[#arr + 1] = { cat = g.cat, typeName = g.typeName } end end; State.mailItems = arr; saveConfig() end)
+        -- MOBILE-FRIENDLY item picker: Fluent multi-dropdowns can't be tapped on touch, so build a real
+        -- tappable scroll-list (same pattern as the Live Wild Pets list). Tap a row to toggle it on/off.
+        mailT:AddParagraph({ Title = "Items to send", Content = "Tap to toggle (green ✓ = will be sent)." })
+        local mailScroll
+        pcall(function()
+            mailScroll = Instance.new("ScrollingFrame")
+            mailScroll.Name = "MailItemPicker"; mailScroll.Size = UDim2.new(1, 0, 0, 200)
+            mailScroll.BackgroundColor3 = Color3.fromRGB(28, 28, 34); mailScroll.BackgroundTransparency = 0.15
+            mailScroll.BorderSizePixel = 0; mailScroll.ScrollBarThickness = 5
+            mailScroll.CanvasSize = UDim2.new(0, 0, 0, 0); mailScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+            Instance.new("UICorner", mailScroll).CornerRadius = UDim.new(0, 6)
+            local lay = Instance.new("UIListLayout", mailScroll); lay.Padding = UDim.new(0, 4); lay.SortOrder = Enum.SortOrder.LayoutOrder
+            local pdg = Instance.new("UIPadding", mailScroll)
+            pdg.PaddingTop, pdg.PaddingBottom, pdg.PaddingLeft, pdg.PaddingRight = UDim.new(0, 5), UDim.new(0, 5), UDim.new(0, 5), UDim.new(0, 5)
+            mailScroll.Parent = mailT.Container
+        end)
+        local mailRowByKey = {}
+        local OFFCOL, ONCOL = Color3.fromRGB(42, 42, 50), Color3.fromRGB(46, 92, 60)
+        local function mailIsOn(cat, tn)
+            for _, p in ipairs(State.mailItems or {}) do if p.cat == cat and p.typeName == tn then return true end end
+            return false
+        end
+        _mailRender = function()
+            if not mailScroll then return end
+            local labels, map = mailItemLabels(); _miMap = map
+            local seen = {}
+            for i, label in ipairs(labels) do
+                local g = map[label]
+                if g then
+                    local key = tostring(g.cat) .. "|" .. tostring(g.typeName)
+                    seen[key] = true
+                    local on = mailIsOn(g.cat, g.typeName)
+                    local rec = mailRowByKey[key]
+                    if rec then
+                        rec.g = g; rec.lbl.Text = label; rec.row.LayoutOrder = i
+                        rec.row.BackgroundColor3 = on and ONCOL or OFFCOL; rec.tick.Text = on and "✓" or ""
+                    else
+                        local row = Instance.new("Frame"); row.Size = UDim2.new(1, 0, 0, 38); row.BorderSizePixel = 0; row.LayoutOrder = i
+                        row.BackgroundColor3 = on and ONCOL or OFFCOL
+                        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 5)
+                        local tick = Instance.new("TextLabel"); tick.BackgroundTransparency = 1; tick.Position = UDim2.new(0, 8, 0, 0); tick.Size = UDim2.new(0, 22, 1, 0)
+                        tick.Font = Enum.Font.GothamBold; tick.TextSize = 16; tick.TextColor3 = Color3.fromRGB(120, 255, 150); tick.Text = on and "✓" or ""; tick.Parent = row
+                        local lbl = Instance.new("TextLabel"); lbl.BackgroundTransparency = 1; lbl.Position = UDim2.new(0, 34, 0, 0); lbl.Size = UDim2.new(1, -40, 1, 0)
+                        lbl.Font = Enum.Font.GothamMedium; lbl.TextSize = 13; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextColor3 = Color3.fromRGB(235, 235, 235); lbl.Text = label; lbl.Parent = row
+                        local btn = Instance.new("TextButton"); btn.Size = UDim2.new(1, 0, 1, 0); btn.BackgroundTransparency = 1; btn.Text = ""; btn.AutoButtonColor = false; btn.Parent = row
+                        local rk = key
+                        btn.MouseButton1Click:Connect(function()
+                            local r = mailRowByKey[rk]; if not r then return end
+                            local gg = r.g; local idx
+                            for j, p in ipairs(State.mailItems or {}) do if p.cat == gg.cat and p.typeName == gg.typeName then idx = j; break end end
+                            if idx then table.remove(State.mailItems, idx) else State.mailItems[#State.mailItems + 1] = { cat = gg.cat, typeName = gg.typeName } end
+                            local nowOn = (idx == nil)
+                            r.row.BackgroundColor3 = nowOn and ONCOL or OFFCOL; r.tick.Text = nowOn and "✓" or ""
+                            saveConfig()
+                        end)
+                        row.Parent = mailScroll
+                        mailRowByKey[key] = { row = row, lbl = lbl, tick = tick, g = g }
+                    end
+                end
+            end
+            for key, rec in pairs(mailRowByKey) do
+                if not seen[key] then pcall(function() rec.row:Destroy() end); mailRowByKey[key] = nil end
+            end
+        end
+        _mailRender()
         mailQtyS = mailT:AddSlider("ahf_mailqty", { Title = "Send quantity (per item)", Description = "How many of EACH picked item to send per batch (only when you own at least this many).", Default = State.mailQty or 1, Min = 1, Max = 20, Rounding = 0 })
         mailQtyS:OnChanged(function(v) if uiBuilding then return end; State.mailQty = v; saveConfig() end)
         autoMailT = mailT:AddToggle("ahf_automail", { Title = "Auto Mail (repeat send)", Description = "Keep mailing the items to the recipient.", Default = State.autoMail })
         autoMailT:OnChanged(function(v) if uiBuilding then return end; State.autoMail = v; if not v then State.mailStatus = "off" end; saveConfig() end)
-        mailT:AddButton({ Title = "Send one batch now", Description = "Send one batch now.", Callback = function() task.spawn(function() pcall(tryMail, true) end) end })
-        mailT:AddButton({ Title = "Refresh sendable items", Description = "Re-read your inventory into the picker.", Callback = function() pcall(function() local l, m = mailItemLabels(); _miMap = m; mailItemDD:SetValues(l) end) end })
+        mailT:AddButton({ Title = "Send one batch now", Description = "Send one batch now.", Callback = function() task.spawn(function() pcall(tryMail, true); pcall(function() State.notify("Mail", tostring(State.mailStatus or "?"), 6) end) end) end })
+        mailT:AddButton({ Title = "Refresh sendable items", Description = "Re-read your inventory into the picker.", Callback = function() pcall(function() if _mailRender then _mailRender() end end) end })
     end)
 
     ---------------------------------------------------------------- CONFIG (share settings across accounts)
@@ -4722,7 +4789,7 @@ local function buildGui()
     pcall(function() if autoMailT then autoMailT:SetValue(State.autoMail) end end)
     pcall(function() if mailQtyS then mailQtyS:SetValue(State.mailQty) end end)
     pcall(function() if mailToIn then mailToIn:SetValue(State.mailTo or "") end end)
-    pcall(function() if mailItemDD and _miMap then local t = {} for label, g in pairs(_miMap) do for _, p in ipairs(State.mailItems or {}) do if p.cat == g.cat and p.typeName == g.typeName then t[label] = true; break end end end mailItemDD:SetValue(t) end end)
+    pcall(function() if _mailRender then _mailRender() end end)
     pcall(function() snAutoT:SetValue(State.snipeAuto) end)
     pcall(function() snRarDD:SetValue(State.snipeRar) end)
     pcall(function() if snPetDD then snPetDD:SetValues(snipePetCatalog()); snPetDD:SetValue(State.snipePets) end end)
