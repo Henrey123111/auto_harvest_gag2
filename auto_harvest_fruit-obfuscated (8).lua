@@ -198,7 +198,7 @@ local State = {
     autoShovelHit = false, shovelHits = 0, shovelStatus = "off",       -- OFFENSE: whack enemies with our shovel
     autoProtectPets = false, protectStatus = "off",
     lockPosition = false,
-    perfMode = false, hidePlants = false, hideAvatar = false,
+    perfMode = false, hidePlants = false, hideAvatar = false, hideHarvestPrompt = false,
     autoWater = false, watered = 0, waterStatus = "off",
     autoPlant = false, planted = 0, plantStatus = "off", plantSeeds = {}, plantSpacing = 2, plantMode = "Random",   -- plantSeeds: set (multi). plantMode: "Random" | "Grid" (how seeds get PLANTED)
     stackStatus = "off",   -- pack-plants-via-Trowel button feedback
@@ -500,7 +500,7 @@ local function configTable()     -- portable settings snapshot — used by BOTH 
         cleanupTypes = State.cleanupTypes,
         buySeeds = State.buySeeds, buyGears = State.buyGears, buyPets = State.buyPets,
         eventSeeds = State.eventSeeds, autoCollectWild = State.autoCollectWild,
-        perfMode = State.perfMode, hidePlants = State.hidePlants, hideAvatar = State.hideAvatar,
+        perfMode = State.perfMode, hidePlants = State.hidePlants, hideAvatar = State.hideAvatar, hideHarvestPrompt = State.hideHarvestPrompt,
         limitHarvestKg = State.limitHarvestKg, maxHarvestKg = State.maxHarvestKg, espWeight = State.espWeight,
     }
 end
@@ -582,6 +582,7 @@ local function applyConfigTable(d)   -- apply a DECODED settings table straight 
         if type(d.perfMode)   == "boolean" then State.perfMode   = d.perfMode end
         if type(d.hidePlants) == "boolean" then State.hidePlants = d.hidePlants end
         if type(d.hideAvatar) == "boolean" then State.hideAvatar = d.hideAvatar end
+        if type(d.hideHarvestPrompt) == "boolean" then State.hideHarvestPrompt = d.hideHarvestPrompt end
         if type(d.limitHarvestKg) == "boolean" then State.limitHarvestKg = d.limitHarvestKg end
         if type(d.maxHarvestKg)   == "number"  then State.maxHarvestKg   = math.clamp(d.maxHarvestKg, 1, 1000) end
         if type(d.espWeight)      == "boolean" then State.espWeight      = d.espWeight end
@@ -947,6 +948,32 @@ local function isHarvestPrompt(p)                -- catch ALL harvestables incl.
     local txt = (tostring(p.ActionText) .. " " .. tostring(p.ObjectText)):lower()
     return (txt:find("harvest") or txt:find("collect") or txt:find("pick")) ~= nil
 end
+-- HIDE HARVEST PROMPT: suppress the default "E — Harvest" billboard / touch-button so you can't accidentally
+-- harvest a plant by hand. Style=Custom hides the UI but keeps the prompt ENABLED — auto-harvest still works
+-- (collectPrompts needs Enabled; fireproximityprompt ignores Style).
+local _hidePromptConn
+local function setHarvestPromptStyle(p, hidden)
+    if typeof(p) == "Instance" and p:IsA("ProximityPrompt") and isHarvestPrompt(p) then
+        pcall(function() p.Style = hidden and Enum.ProximityPromptStyle.Custom or Enum.ProximityPromptStyle.Default end)
+    end
+end
+local function applyHideHarvestPrompt(on)
+    State.hideHarvestPrompt = on
+    pcall(function() for _, d in ipairs(workspace:GetDescendants()) do setHarvestPromptStyle(d, on) end end)
+    if on then
+        if not _hidePromptConn then
+            _hidePromptConn = workspace.DescendantAdded:Connect(function(d)
+                if typeof(d) == "Instance" and d:IsA("ProximityPrompt") then
+                    task.defer(function() if State.hideHarvestPrompt then setHarvestPromptStyle(d, true) end end)  -- defer: ActionText is set after the prompt is created
+                end
+            end)
+            if State.conns then table.insert(State.conns, _hidePromptConn) end
+        end
+    elseif _hidePromptConn then
+        pcall(function() _hidePromptConn:Disconnect() end); _hidePromptConn = nil
+    end
+end
+State.applyHideHarvestPrompt = applyHideHarvestPrompt
 local function collectPrompts(plot, seen, now)
     local out = {}
     local plants = plot and plot:FindFirstChild("Plants")
@@ -4599,6 +4626,12 @@ local function buildGui()
         Default = State.hideAvatar,
     })
     hideAvatarT:OnChanged(function(v) if uiBuilding then return end; State.hideAvatar = v; pcall(applyHideAvatar, v); saveConfig() end)
+    local hidePromptT = misc:AddToggle("ahf_hideprompt", {
+        Title = "Hide harvest 'E' prompt",
+        Description = "Hides the in-world Harvest button so you can't harvest plants by hand. Auto-harvest still works.",
+        Default = State.hideHarvestPrompt,
+    })
+    hidePromptT:OnChanged(function(v) if uiBuilding then return end; State.hideHarvestPrompt = v; pcall(applyHideHarvestPrompt, v); saveConfig() end)
 
     misc:AddParagraph({ Title = "Fruit info", Content = "Show each fruit's weight (kg) and sell price floating in your garden." })
     local espWT = misc:AddToggle("ahf_espweight", {
@@ -4652,8 +4685,8 @@ local function buildGui()
         State.autoShovelHit = false
         State.autoProtectPets = false
         State.snipeSkipOld, State.snipeMaxAge = true, 5
-        State.perfMode, State.hidePlants, State.hideAvatar = false, false, false
-        pcall(applyPerfMode, false); pcall(applyHidePlants, false); pcall(applyHideAvatar, false)   -- undo the on-screen effects, not just the flags
+        State.perfMode, State.hidePlants, State.hideAvatar, State.hideHarvestPrompt = false, false, false, false
+        pcall(applyPerfMode, false); pcall(applyHidePlants, false); pcall(applyHideAvatar, false); pcall(applyHideHarvestPrompt, false)   -- undo the on-screen effects, not just the flags
         pcall(function() local c = LocalPlayer.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.Anchored = false end end)
         -- push every value into its matching UI control (multi-dropdowns take the array form)
         pcall(function() hT:SetValue(false) end);      pcall(function() sT:SetValue(false) end);  pcall(function() sFullT:SetValue(false) end);  pcall(function() sDelayS:SetValue(3) end)
@@ -4674,7 +4707,7 @@ local function buildGui()
         pcall(function() wbT:SetValue(false) end);     pcall(function() lockT:SetValue(false) end); pcall(function() shovelHitT:SetValue(false) end); pcall(function() protectT:SetValue(false) end)
         pcall(function() antiShovelT:SetValue(false) end)
         pcall(function() snSkipOldT:SetValue(true) end); pcall(function() snMaxAgeS:SetValue(5) end)
-        pcall(function() perfT:SetValue(false) end);   pcall(function() hidePlantsT:SetValue(false) end);   pcall(function() hideAvatarT:SetValue(false) end)
+        pcall(function() perfT:SetValue(false) end);   pcall(function() hidePlantsT:SetValue(false) end);   pcall(function() hideAvatarT:SetValue(false) end);   pcall(function() hidePromptT:SetValue(false) end)
         uiBuilding = false
         saveConfig()
         Fluent:Notify({ Title = "YumaBlox", Content = "All settings reset to defaults.", Duration = 3 })
@@ -4753,6 +4786,7 @@ local function buildGui()
     pcall(function() perfT:SetValue(State.perfMode); pcall(applyPerfMode, State.perfMode) end)
     pcall(function() hidePlantsT:SetValue(State.hidePlants); pcall(applyHidePlants, State.hidePlants) end)
     pcall(function() hideAvatarT:SetValue(State.hideAvatar); pcall(applyHideAvatar, State.hideAvatar) end)
+    pcall(function() hidePromptT:SetValue(State.hideHarvestPrompt); pcall(applyHideHarvestPrompt, State.hideHarvestPrompt) end)
     pcall(function() afkT:SetValue(State.antiAfk) end)
     pcall(function() flingT:SetValue(State.antiFling) end)
     pcall(function() wbT:SetValue(State.antiWheelbarrow) end)
